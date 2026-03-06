@@ -122,7 +122,7 @@ export async function handleSteamLogin(c: Context) {
 
 export async function handleSteamCallback(c: Context) {
   try {
-    const profile = await steam.authenticate({ url: c.req.url });
+    const profile = await steam.authenticate({ url: c.req.url, method: "GET" });
     const role = resolveRole(profile.steamid);
 
     if (role === "blacklisted" || role === "unknown") {
