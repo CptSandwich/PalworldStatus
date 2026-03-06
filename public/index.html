@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en" data-role="loading">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PalworldStatus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Noto+Sans:wght@400;600&family=Oxanium:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<!-- ── Header ────────────────────────────────────────────────────────────────── -->
+<header class="site-header">
+  <span class="site-title">PalworldStatus</span>
+  <div class="header-user" id="header-user">
+    <!-- Populated by app.js -->
+  </div>
+</header>
+
+<!-- ── Login / Denied screen ─────────────────────────────────────────────────── -->
+<section class="auth-screen" id="auth-screen">
+  <div class="auth-panel">
+    <h1 class="auth-title">PalworldStatus</h1>
+    <p class="auth-subtitle" id="auth-message">Sign in to view server status.</p>
+    <a href="/auth/steam" class="steam-login-btn" id="steam-login-link">
+      <img src="https://community.cloudflare.steamstatic.com/public/images/signinthroughsteam/sits_01.png"
+           alt="Sign in through Steam" width="180" />
+    </a>
+    <button class="btn btn-secondary" id="logout-btn" style="display:none">Logout</button>
+  </div>
+</section>
+
+<!-- ── Main dashboard (whitelisted + admin) ──────────────────────────────────── -->
+<main class="dashboard" id="dashboard">
+
+  <!-- Server cards -->
+  <section class="server-grid" id="server-grid">
+    <!-- Populated by app.js -->
+  </section>
+
+  <!-- Player map -->
+  <section class="map-section" id="map-section">
+    <div class="section-header">
+      <h2 class="section-title">World Map</h2>
+      <div class="map-tabs" id="map-tabs">
+        <!-- Tab buttons populated by app.js -->
+      </div>
+    </div>
+    <div class="map-container">
+      <img id="map-image" src="/palworld-map.jpg" alt="Palworld World Map" />
+      <canvas id="map-canvas"></canvas>
+    </div>
+  </section>
+
+  <!-- Audit log -->
+  <section class="audit-section">
+    <h2 class="section-title">Audit Log</h2>
+    <table class="data-table" id="audit-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Server</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody id="audit-body">
+        <!-- Populated by app.js -->
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Player management (admin only) -->
+  <section class="admin-section" id="player-management" data-admin-only>
+    <h2 class="section-title">Player Management</h2>
+    <table class="data-table" id="players-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>First Seen</th>
+          <th>Last Seen</th>
+          <th>Last Server</th>
+          <th>Access</th>
+        </tr>
+      </thead>
+      <tbody id="players-body">
+        <!-- Populated by app.js -->
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Restart schedules (admin only) -->
+  <section class="admin-section" id="restart-schedules" data-admin-only>
+    <h2 class="section-title">Restart Schedules</h2>
+    <div id="schedules-list">
+      <!-- Populated by app.js -->
+    </div>
+  </section>
+
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

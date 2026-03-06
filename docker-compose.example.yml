@@ -1,0 +1,68 @@
+# Example docker-compose for running PalworldStatus alongside Palworld servers.
+# On Unraid, configure via the Docker UI instead of this file — this is for reference.
+
+version: "3.9"
+
+services:
+
+  # ── PalworldStatus ──────────────────────────────────────────────────────────
+  palworld-status:
+    image: ghcr.io/yourname/palworld-status:latest
+    # Or build locally:
+    # build: .
+    container_name: palworld-status
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /mnt/user/appdata/palworld-status:/app/data
+    environment:
+      ADMIN_STEAM_ID: "76561198000000000"       # Your Steam 64-bit ID
+      STEAM_API_KEY: "your_steam_api_key"
+      STEAM_REALM: "https://palworld.yourdomain.com"
+      PUBLIC_HOST: "palworld.yourdomain.com"
+      SESSION_SECRET: "change_me_to_a_long_random_string"
+      # PORT: 3000  # optional, default 3000
+      # DB_PATH: /app/data/palworld-status.db  # optional
+
+  # ── Main Palworld Server (always-on) ────────────────────────────────────────
+  palworld-main:
+    image: ich777/steamcmd:palworld
+    container_name: palworld-main
+    restart: unless-stopped
+    ports:
+      - "8211:8211/udp"   # Game port (exposed to internet for players)
+      # REST API port 8212 is NOT exposed to host — queried internally only
+    environment:
+      GAME_PORT: 8211
+      SERVER_NAME: "Main Server"
+      ADMINPASSWORD: "your_admin_password_here"
+    volumes:
+      - /mnt/user/appdata/palworld-main:/serverdata
+    labels:
+      palworld-status.enabled: "true"
+      palworld-status.name: "Main Server"
+      palworld-status.rest-port: "8212"
+      palworld-status.rest-password: "your_admin_password_here"
+
+  # ── Legacy Palworld Server (idle-managed) ────────────────────────────────────
+  palworld-legacy:
+    image: ich777/steamcmd:palworld
+    container_name: palworld-legacy
+    restart: "no"         # Don't auto-restart — managed by palworld-status
+    ports:
+      - "8221:8211/udp"   # Different host port, same container port
+    environment:
+      GAME_PORT: 8211
+      SERVER_NAME: "Legacy Server"
+      ADMINPASSWORD: "your_admin_password_here"
+    volumes:
+      - /mnt/user/appdata/palworld-legacy:/serverdata
+    labels:
+      palworld-status.enabled: "true"
+      palworld-status.name: "Legacy Server"
+      palworld-status.rest-port: "8212"
+      palworld-status.rest-password: "your_admin_password_here"
+      palworld-status.allow-start: "true"
+      palworld-status.idle-shutdown-minutes: "10"

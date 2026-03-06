@@ -1,0 +1,22 @@
+{
+  "name": "palworld-status",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.2",
+    "hono": "^4.6.0",
+    "node-cron": "^3.0.3",
+    "node-steam-openid": "^1.2.1"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.32",
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "bun-types": "latest"
+  }
+}
