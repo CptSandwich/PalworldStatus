@@ -7,7 +7,7 @@ services:
 
   # ── PalworldStatus ──────────────────────────────────────────────────────────
   palworld-status:
-    image: ghcr.io/yourname/palworld-status:latest
+    image: ghcr.io/cptsandwich/palworldstatus:latest
     # Or build locally:
     # build: .
     container_name: palworld-status

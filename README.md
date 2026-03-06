@@ -72,7 +72,7 @@ In Unraid → Docker → Add Container:
 
 | Field | Value |
 |---|---|
-| Repository | `ghcr.io/cptsandwich/palworld-status:latest` |
+| Repository | `ghcr.io/cptsandwich/palworldstatus:latest` |
 | Port | Host `3000` → Container `3000` |
 | Extra Parameters | `--mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock` |
 | Volume | `/mnt/user/appdata/palworld-status` → `/app/data` |
