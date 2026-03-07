@@ -106,18 +106,26 @@ app.get("/api/status", requireWhitelisted, async (c) => {
           connectionAddress: `${PUBLIC_HOST}:${container.gamePort ?? 8211}`,
           gamePort: container.gamePort,
           allowStart: container.allowStart,
+          idleShutdownMinutes: container.idleShutdownMinutes ?? null,
           idleCountdownSeconds: null,
           pendingTimedAction: getPendingTimedAction(container.id),
         };
       }
 
       const ip = await getContainerIP(container.id);
+      if (!ip) {
+        console.warn(`[status] ${container.displayName} (${container.id.slice(0, 12)}) → could not resolve container IP`);
+      }
+
       const [info, players] = await Promise.all([
         ip ? getServerInfo(ip, container.restPort, container.restPassword) : null,
         ip ? getPlayers(ip, container.restPort, container.restPassword) : null,
       ]);
 
       const gameStatus = info ? "online" : "crashed";
+      if (!info && ip) {
+        console.warn(`[status] ${container.displayName} → gameStatus=crashed (REST API unreachable at ${ip}:${container.restPort})`);
+      }
 
       // Use server name from REST API; fall back to Docker label
       const displayName = info?.serverName || container.displayName;
@@ -172,6 +180,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         connectionAddress: `${PUBLIC_HOST}:${container.gamePort ?? 8211}`,
         gamePort: container.gamePort,
         allowStart: container.allowStart,
+        idleShutdownMinutes: container.idleShutdownMinutes ?? null,
         idleCountdownSeconds: getIdleCountdownSeconds(container.id),
         pendingTimedAction: getPendingTimedAction(container.id),
       };

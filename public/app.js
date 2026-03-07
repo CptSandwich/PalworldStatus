@@ -56,6 +56,7 @@ async function fetchMapCalibration() {
 
 async function startPolling() {
   clearInterval(pollTimer);
+  renderCurrentView(); // show loading state immediately
   await poll();
   pollTimer = setInterval(poll, POLL_INTERVAL_MS);
 }
@@ -149,10 +150,10 @@ function onHashChange() {
 }
 
 function renderCurrentView() {
-  if (!lastStatus) return;
   const hash = getHash();
   const serverMatch = hash.match(/^server\/(.+)$/);
   if (serverMatch) {
+    if (!lastStatus) return;
     const id = serverMatch[1];
     const server = lastStatus.find((s) => s.id === id);
     if (server) {
@@ -174,9 +175,22 @@ function renderLandingPage() {
 
   // Server grid
   const gridSection = el("section", { class: "server-grid-section" });
+  const gridHeader = el("div", { class: "section-header" });
+  gridHeader.appendChild(el("h2", { class: "section-title" }, "Server Status"));
+  gridSection.appendChild(gridHeader);
+
   const grid = el("div", { class: "server-grid", id: "server-grid" });
-  for (const s of lastStatus) {
-    grid.appendChild(buildServerCard(s));
+  if (!lastStatus || lastStatus.length === 0) {
+    const empty = el("p", { class: "empty-state" },
+      lastStatus === null
+        ? "Checking server status\u2026"
+        : "No servers configured. Add palworld-status.enabled=true labels to Palworld containers."
+    );
+    grid.appendChild(empty);
+  } else {
+    for (const s of lastStatus) {
+      grid.appendChild(buildServerCard(s));
+    }
   }
   gridSection.appendChild(grid);
   root.appendChild(gridSection);
@@ -263,6 +277,8 @@ function buildServerCard(s) {
   const header = el("div", { class: "server-card-header" });
   header.appendChild(el("span", { class: "status-dot" }));
   header.appendChild(el("span", { class: "server-name" }, s.name));
+  const isLegacy = s.idleShutdownMinutes != null && s.idleShutdownMinutes > 0;
+  header.appendChild(el("span", { class: `server-era-badge ${isLegacy ? "era-legacy" : "era-current"}` }, isLegacy ? "Legacy" : "Current"));
   header.appendChild(el("span", { class: "status-label" }, statusLabel));
   card.appendChild(header);
 

@@ -36,8 +36,9 @@ async function palworldFetch<T>(
   path: string,
   opts: RequestInit = {}
 ): Promise<T | null> {
+  const url = `http://${ip}:${port}${path}`;
   try {
-    const res = await fetch(`http://${ip}:${port}${path}`, {
+    const res = await fetch(url, {
       ...opts,
       headers: {
         Authorization: basicAuth(password),
@@ -46,9 +47,15 @@ async function palworldFetch<T>(
       },
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.warn(`[palworld] ${opts.method ?? "GET"} ${url} → HTTP ${res.status} ${res.statusText}${body ? ` | ${body.slice(0, 200)}` : ""}`);
+      return null;
+    }
     return (await res.json()) as T;
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[palworld] ${opts.method ?? "GET"} ${url} → ${msg}`);
     return null;
   }
 }
