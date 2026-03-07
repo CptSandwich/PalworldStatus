@@ -183,6 +183,16 @@ export function upsertPlayer(
   );
 }
 
+/** Insert a player record only if one doesn't already exist. Used for log-scan
+ *  pre-population so we never overwrite a real name with a placeholder. */
+export function insertPlayerIfNew(steamId: string, displayName: string, serverName: string) {
+  getDb().run(
+    `INSERT OR IGNORE INTO known_players (steam_id, display_name, last_seen, last_server)
+     VALUES (?, ?, datetime('now'), ?)`,
+    [steamId, displayName, serverName]
+  );
+}
+
 export function getPlayerStatus(
   steamId: string
 ): "whitelisted" | "blacklisted" | null {

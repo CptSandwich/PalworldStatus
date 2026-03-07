@@ -101,7 +101,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
       // Register idle tracker (no-op if already registered)
       registerIdleTracker({
         containerId: container.id,
-        containerName: container.name,
+        containerName: apiNameCache.get(container.id) ?? container.name,
         restPort: container.restPort,
         restPassword: container.restPassword,
         idleShutdownMinutes: container.idleShutdownMinutes,
@@ -272,7 +272,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     logAudit("RESTART", {
       steamId: user.steamId,
       displayName: user.displayName,
-      containerName: container.name,
+      containerName: apiNameCache.get(containerId) ?? container.name,
       details: "immediate (admin)",
     });
   } else {
@@ -349,7 +349,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       logAudit("RESTART", {
         steamId: user.steamId,
         displayName: user.displayName,
-        containerName: container.name,
+        containerName: apiNameCache.get(containerId) ?? container.name,
         details: `${WHITELISTED_RESTART_MINUTES}-minute delayed restart`,
       });
     }, WHITELISTED_RESTART_MINUTES * 60_000);
@@ -359,7 +359,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     logAudit("RESTART_SCHEDULED", {
       steamId: user.steamId,
       displayName: user.displayName,
-      containerName: container.name,
+      containerName: apiNameCache.get(containerId) ?? container.name,
       details: `${WHITELISTED_RESTART_MINUTES}-minute restart scheduled by ${user.displayName}`,
     });
   }
@@ -387,7 +387,7 @@ app.post("/api/containers/:id/start", requireWhitelisted, async (c) => {
   logAudit("START", {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.name,
+    containerName: apiNameCache.get(containerId) ?? container.name,
   });
 
   return c.json({ ok: true });
@@ -413,7 +413,7 @@ app.post("/api/containers/:id/stop", requireAdmin, async (c) => {
   logAudit("STOP", {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.name,
+    containerName: apiNameCache.get(containerId) ?? container.name,
   });
 
   return c.json({ ok: true });
@@ -452,7 +452,7 @@ app.post("/api/containers/:id/broadcast", requireAdmin, async (c) => {
   logAudit("BROADCAST", {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.name,
+    containerName: apiNameCache.get(containerId) ?? container.name,
     details: msg,
   });
 
@@ -523,7 +523,7 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
     logAudit(`TIMED_${body.action.toUpperCase()}`, {
       steamId: user.steamId,
       displayName: user.displayName,
-      containerName: container.name,
+      containerName: apiNameCache.get(containerId) ?? container.name,
       details: `minutes=${minutes}`,
     });
   }
@@ -565,7 +565,7 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
   logAudit(`SCHEDULE_${body.action.toUpperCase()}`, {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.name,
+    containerName: apiNameCache.get(containerId) ?? container.name,
     details: `minutes=${minutes}`,
   });
 
@@ -722,9 +722,17 @@ app.delete("/api/map-calibration", requireAdmin, (c) => {
 
 // ── Static files ──────────────────────────────────────────────────────────────
 
-// Icons live in the project root, not public/
-app.get("/favicon.ico", serveStatic({ path: "./PalworldStatus.ico" }));
-app.get("/favicon.png", serveStatic({ path: "./PalworldStatusIcon.png" }));
+// Icons live in the project root, not public/ — serve directly via Bun.file()
+app.get("/favicon.ico", (c) =>
+  new Response(Bun.file("./PalworldStatus.ico"), {
+    headers: { "Content-Type": "image/x-icon", "Cache-Control": "public, max-age=86400" },
+  })
+);
+app.get("/favicon.png", (c) =>
+  new Response(Bun.file("./PalworldStatusIcon.png"), {
+    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+  })
+);
 
 app.use("/*", serveStatic({ root: "./public" }));
 

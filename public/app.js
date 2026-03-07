@@ -318,9 +318,6 @@ function buildServerCard(s) {
   const header = el("div", { class: "server-card-header" });
   header.appendChild(el("span", { class: "status-dot" }));
   header.appendChild(el("span", { class: "server-name" }, s.name));
-  if (currentUser?.role === "admin" && s.containerName) {
-    header.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
-  }
   const isLegacy = s.idleShutdownMinutes != null && s.idleShutdownMinutes > 0;
   header.appendChild(el("span", { class: `server-era-badge ${isLegacy ? "era-legacy" : "era-current"}` }, isLegacy ? "Legacy" : "Current"));
   header.appendChild(el("span", { class: "status-label" }, statusLabel));
@@ -411,6 +408,9 @@ function buildServerCard(s) {
     const startBtn = el("button", { class: "btn btn-small" }, "▶ Start");
     startBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "start", s.name, startBtn); };
     footer.appendChild(startBtn);
+  }
+  if (isAdmin && s.containerName) {
+    footer.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
   }
   if (footer.children.length > 0) card.appendChild(footer);
 

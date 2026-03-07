@@ -16,7 +16,7 @@ import Dockerode from "dockerode";
 import { Writable } from "stream";
 import {
   insertChatMessage,
-  upsertPlayer,
+  insertPlayerIfNew,
 } from "./db.js";
 import type { PalworldContainer } from "./docker.js";
 
@@ -117,14 +117,16 @@ export async function scanLogsForPlayers(container: PalworldContainer): Promise<
       ) {
         const matches = [...line.matchAll(JOIN_STEAM_PATTERN)];
         for (const m of matches) {
-          foundIds.add(m[1]);
+          // Steam64 IDs always start with 7656119 — filter out false positives
+          if (m[1].startsWith("7656119")) foundIds.add(m[1]);
         }
       }
     }
 
     if (foundIds.size > 0) {
       for (const steamId of foundIds) {
-        upsertPlayer(steamId, `Player ${steamId.slice(-4)}`, container.name);
+        // INSERT OR IGNORE: never overwrite a real name with a placeholder
+        insertPlayerIfNew(steamId, `Player ${steamId.slice(-4)}`, container.name);
       }
       console.log(
         `[chatlog] Pre-populated ${foundIds.size} player(s) from ${container.name} logs`

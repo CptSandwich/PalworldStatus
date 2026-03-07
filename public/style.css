@@ -239,6 +239,10 @@ a:hover { color: var(--accent-hover); }
   font-size: 17px;
   font-weight: 700;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   letter-spacing: 0.5px;
 }
 
@@ -250,6 +254,8 @@ a:hover { color: var(--accent-hover); }
   border-radius: 3px;
   padding: 1px 5px;
   white-space: nowrap;
+  margin-left: auto;
+  align-self: center;
 }
 
 .status-label {
