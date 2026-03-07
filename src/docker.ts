@@ -6,7 +6,6 @@ export interface PalworldContainer {
   id: string;       // Docker container ID (changes on recreation)
   serverId: string; // Stable ID: label palworld-status.server-id ?? container name
   name: string;
-  displayName: string;
   status: "running" | "stopped" | "starting";
   restPort: number;
   restPassword: string;
@@ -55,7 +54,6 @@ export async function discoverPalworldContainers(): Promise<PalworldContainer[]>
       id: c.Id,
       serverId: labels[`${LABEL_PREFIX}.server-id`] ?? rawName,
       name: rawName,
-      displayName: labels[`${LABEL_PREFIX}.name`] ?? rawName,
       status,
       restPort: parseInt(labels[`${LABEL_PREFIX}.rest-port`] ?? "8212", 10),
       restPassword: labels[`${LABEL_PREFIX}.rest-password`] ?? "",

@@ -24,6 +24,8 @@ let mapPanX = 0;
 let mapPanY = 0;
 let mapEventCleanup = null;          // fn to remove window drag listeners
 let calibState = null;               // null | { step, points[], pendingFracX, pendingFracY }
+let detailFullyRendered = false;     // true after first detail page render; resets on navigation
+let savedCronValues = new Map();     // preserves unsaved cron text across landing page polls
 
 // Player dot colours (cycle through palette)
 const DOT_COLORS = ["#3ecfcf", "#4caf6e", "#9b6bdf", "#e05252", "#f0c040", "#5ab4e0"];
@@ -152,6 +154,7 @@ function onHashChange() {
     detailMapInner = null;
     mapZoom = 1; mapPanX = 0; mapPanY = 0;
     calibState = null;
+    detailFullyRendered = false;
     if (mapEventCleanup) { mapEventCleanup(); mapEventCleanup = null; }
   } else {
     detailContainerId = null;
@@ -181,6 +184,40 @@ function renderCurrentView() {
 
 function renderLandingPage() {
   const root = document.getElementById("view-root");
+  const existingGrid = document.getElementById("server-grid");
+
+  if (existingGrid) {
+    // Subsequent poll: preserve page structure, only update dynamic content
+
+    // Save any unsaved cron expressions
+    savedCronValues = new Map();
+    root.querySelectorAll("[data-sid]").forEach(row => {
+      const input = row.querySelector(".schedule-cron-input");
+      if (input) savedCronValues.set(row.dataset.sid, input.value);
+    });
+
+    // Rebuild only the server grid cards
+    existingGrid.innerHTML = "";
+    if (!lastStatus || lastStatus.length === 0) {
+      existingGrid.appendChild(el("p", { class: "empty-state" },
+        lastStatus === null
+          ? "Checking server status\u2026"
+          : "No servers configured. Add palworld-status.enabled=true labels to Palworld containers."
+      ));
+    } else {
+      for (const s of lastStatus) existingGrid.appendChild(buildServerCard(s));
+    }
+
+    // Refresh data-only sections (they target their own elements)
+    fetchAndRenderAuditLog();
+    if (currentUser?.role === "admin") {
+      fetchAndRenderPlayers();
+      fetchAndRenderSchedules();
+    }
+    return;
+  }
+
+  // First render: full page build
   root.innerHTML = "";
 
   // Server grid
@@ -191,16 +228,13 @@ function renderLandingPage() {
 
   const grid = el("div", { class: "server-grid", id: "server-grid" });
   if (!lastStatus || lastStatus.length === 0) {
-    const empty = el("p", { class: "empty-state" },
+    grid.appendChild(el("p", { class: "empty-state" },
       lastStatus === null
         ? "Checking server status\u2026"
         : "No servers configured. Add palworld-status.enabled=true labels to Palworld containers."
-    );
-    grid.appendChild(empty);
+    ));
   } else {
-    for (const s of lastStatus) {
-      grid.appendChild(buildServerCard(s));
-    }
+    for (const s of lastStatus) grid.appendChild(buildServerCard(s));
   }
   gridSection.appendChild(grid);
   root.appendChild(gridSection);
@@ -218,15 +252,12 @@ function renderLandingPage() {
   }
   auditHead.appendChild(auditHeadRow);
   auditTable.appendChild(auditHead);
-  const auditBody = el("tbody", { id: "audit-body" });
-  auditTable.appendChild(auditBody);
+  auditTable.appendChild(el("tbody", { id: "audit-body" }));
   auditSection.appendChild(auditTable);
   root.appendChild(auditSection);
-
-  // Load and render audit log
   fetchAndRenderAuditLog();
 
-  // Admin: player management
+  // Admin: player management + restart schedules
   if (currentUser?.role === "admin") {
     const pmSection = el("section", { class: "admin-section", id: "player-management" });
     const pmHeader = el("div", { class: "section-header" });
@@ -245,7 +276,6 @@ function renderLandingPage() {
     root.appendChild(pmSection);
     fetchAndRenderPlayers();
 
-    // Admin: restart schedules
     const schedSection = el("section", { class: "admin-section", id: "restart-schedules" });
     const schedHeader = el("div", { class: "section-header" });
     schedHeader.appendChild(el("h2", { class: "section-title" }, "Restart Schedules"));
@@ -288,6 +318,9 @@ function buildServerCard(s) {
   const header = el("div", { class: "server-card-header" });
   header.appendChild(el("span", { class: "status-dot" }));
   header.appendChild(el("span", { class: "server-name" }, s.name));
+  if (currentUser?.role === "admin" && s.containerName) {
+    header.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
+  }
   const isLegacy = s.idleShutdownMinutes != null && s.idleShutdownMinutes > 0;
   header.appendChild(el("span", { class: `server-era-badge ${isLegacy ? "era-legacy" : "era-current"}` }, isLegacy ? "Legacy" : "Current"));
   header.appendChild(el("span", { class: "status-label" }, statusLabel));
@@ -387,9 +420,6 @@ function buildServerCard(s) {
 // ── Detail page ───────────────────────────────────────────────────────────────
 
 function renderDetailPage(s) {
-  const root = document.getElementById("view-root");
-  root.innerHTML = "";
-
   const gameStatus = s.dockerStatus !== "running" ? "offline"
     : s.gameStatus === "online"   ? "online"
     : s.gameStatus === "crashed"  ? "crashed"
@@ -403,19 +433,58 @@ function renderDetailPage(s) {
     offline:  s.dockerStatus === "starting" ? "Starting" : "Offline",
   }[gameStatus] ?? "Offline";
 
-  // Detail header
+  // Subsequent poll: only update dynamic section, leave map/chat DOM intact
+  if (detailFullyRendered && document.getElementById("dp-dynamic")) {
+    const dot = document.getElementById("dp-status-dot");
+    if (dot) dot.style.cssText = `background:var(--status-${gameStatus});box-shadow:0 0 7px var(--status-${gameStatus})`;
+    const lbl = document.getElementById("dp-status-label");
+    if (lbl) { lbl.textContent = statusLabel; lbl.style.color = `var(--status-${gameStatus})`; }
+    const dyn = document.getElementById("dp-dynamic");
+    dyn.innerHTML = "";
+    _buildDetailDynamic(dyn, s, gameStatus);
+    renderDetailCanvas(s);
+    void refreshChatLog(s.id);
+    return;
+  }
+
+  // First render: full page build
+  const root = document.getElementById("view-root");
+  root.innerHTML = "";
+
+  // Detail header (IDs allow targeted status updates on subsequent polls)
   const hdr = el("div", { class: "detail-header" });
   const backBtn = el("button", { class: "back-btn" }, "← Back");
   backBtn.onclick = () => { location.hash = ""; };
   hdr.appendChild(backBtn);
-  const nameDot = el("span", { class: "status-dot", style: `background:var(--status-${gameStatus});box-shadow:0 0 7px var(--status-${gameStatus})` });
-  hdr.appendChild(nameDot);
-  const nameEl = el("span", { class: "detail-server-name" }, s.name);
-  hdr.appendChild(nameEl);
-  const labelEl = el("span", { class: "status-label", style: `color:var(--status-${gameStatus})` }, statusLabel);
-  hdr.appendChild(labelEl);
+  hdr.appendChild(el("span", {
+    id: "dp-status-dot",
+    class: "status-dot",
+    style: `background:var(--status-${gameStatus});box-shadow:0 0 7px var(--status-${gameStatus})`,
+  }));
+  hdr.appendChild(el("span", { class: "detail-server-name" }, s.name));
+  if (currentUser?.role === "admin" && s.containerName) {
+    hdr.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
+  }
+  hdr.appendChild(el("span", {
+    id: "dp-status-label",
+    class: "status-label",
+    style: `color:var(--status-${gameStatus})`,
+  }, statusLabel));
   root.appendChild(hdr);
 
+  // Dynamic section (rebuilt on every poll)
+  const dyn = el("div", { id: "dp-dynamic" });
+  root.appendChild(dyn);
+  _buildDetailDynamic(dyn, s, gameStatus);
+
+  // Static sections (built once, never rebuilt by poll)
+  buildDetailMap(root, s);
+  void buildChatLog(root, s.id);
+
+  detailFullyRendered = true;
+}
+
+function _buildDetailDynamic(dyn, s, gameStatus) {
   // Server info strip
   const infoPanel = el("div", { class: "detail-panel" });
   const metaRow = el("div", { style: "display:flex;gap:24px;flex-wrap:wrap;align-items:center" });
@@ -441,7 +510,7 @@ function renderDetailPage(s) {
   }
   infoPanel.appendChild(metaRow);
 
-  // Idle countdown in detail
+  // Idle countdown
   if (s.idleCountdownSeconds !== null) {
     const mins = Math.floor(s.idleCountdownSeconds / 60);
     const secs = s.idleCountdownSeconds % 60;
@@ -452,9 +521,9 @@ function renderDetailPage(s) {
     countdown.appendChild(cancelBtn);
     infoPanel.appendChild(countdown);
   }
-  root.appendChild(infoPanel);
+  dyn.appendChild(infoPanel);
 
-  // Player list panel
+  // Player list
   if (gameStatus === "online" && s.players.length > 0) {
     const playersPanel = el("div", { class: "detail-panel" });
     playersPanel.appendChild(el("div", { class: "detail-panel-title" }, "Players Online"));
@@ -462,33 +531,25 @@ function renderDetailPage(s) {
     for (const p of s.players) {
       const row = el("div", { class: "player-row" });
       row.appendChild(el("span", { class: "player-name" }, p.name));
-      row.appendChild(el("span", { class: "player-stats" },
-        `Lv.${p.level}  ${Math.round(p.locationX)}, ${Math.round(p.locationY)}`
+      row.appendChild(el("span", { class: "player-level" }, `Lv.${p.level}`));
+      row.appendChild(el("span", { class: "player-coords" },
+        `X: ${p.locationX.toFixed(2)}  Y: ${p.locationY.toFixed(2)}`
       ));
       list.appendChild(row);
     }
     playersPanel.appendChild(list);
-    root.appendChild(playersPanel);
+    dyn.appendChild(playersPanel);
   }
 
-  // Admin: full timed action panel (restart + shutdown with configurable delay)
+  // Action panels
   if (currentUser?.role === "admin") {
-    buildTimedActionPanel(root, s);
+    buildTimedActionPanel(dyn, s);
   } else if (currentUser?.role === "whitelisted") {
-    // Whitelisted: restart-only button (server enforces 5-min delay + broadcast)
-    buildWhitelistedRestartPanel(root, s, gameStatus);
+    buildWhitelistedRestartPanel(dyn, s, gameStatus);
   }
-
-  // Admin only: broadcast panel
   if (currentUser?.role === "admin" && gameStatus === "online") {
-    buildBroadcastPanel(root, s);
+    buildBroadcastPanel(dyn, s);
   }
-
-  // Map section
-  buildDetailMap(root, s);
-
-  // Chat log
-  buildChatLog(root, s.id);
 }
 
 // ── Timed action panel ────────────────────────────────────────────────────────
@@ -967,19 +1028,23 @@ function renderDetailCanvas(s) {
     }
   }
 
-  // Draw history trails
+  // Draw exploration fog clouds
   if (detailHistoryEnabled && detailHistoryData) {
+    ctx.save();
+    ctx.filter = "blur(18px)";
+    ctx.globalAlpha = 0.28;
     for (const ph of detailHistoryData.players) {
       if (detailHiddenPlayers.has(ph.steamId)) continue;
       const color = playerColors[ph.steamId] ?? DOT_COLORS[0];
-      ctx.fillStyle = color + "66"; // 40% opacity hex suffix
+      ctx.fillStyle = color;
       for (const pt of ph.points) {
         const { cx, cy } = worldToCanvas(pt.x, pt.y);
         ctx.beginPath();
-        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 14, 0, Math.PI * 2);
         ctx.fill();
       }
     }
+    ctx.restore();
   }
 
   // Draw live player dots
@@ -1202,7 +1267,11 @@ async function fetchAndRenderPlayers() {
       tr.appendChild(el("td", { class: "mono" }, formatTs(p.last_seen)));
       tr.appendChild(el("td", {}, p.last_server ?? "—"));
       const actionTd = el("td", {});
-      if (p.status === "whitelisted") {
+      if (p.steam_id === currentUser?.steamId) {
+        actionTd.appendChild(el("span", {
+          style: "font-size:11px;color:var(--accent-purple);font-family:var(--font-mono);padding:2px 6px",
+        }, "[admin]"));
+      } else if (p.status === "whitelisted") {
         const blBtn = el("button", { class: "btn btn-small btn-danger" }, "✗ Blacklist");
         blBtn.onclick = () => setPlayerStatus(p.steam_id, "blacklisted", blBtn);
         actionTd.appendChild(blBtn);
@@ -1258,14 +1327,16 @@ function renderSchedules(schedules, servers) {
     const cronVal = sched?.cron_expr ?? "";
     const enabledVal = sched?.enabled === 1;
 
-    const row = el("div", { class: `schedule-row ${enabledVal ? "enabled" : ""}` });
+    const row = el("div", { class: `schedule-row ${enabledVal ? "enabled" : ""}`, "data-sid": s.id });
     row.appendChild(el("span", { class: "schedule-name" }, s.name));
 
+    const savedCron = savedCronValues.get(s.id);
+    if (savedCron !== undefined) savedCronValues.delete(s.id);
     const cronInput = el("input", {
       class: "schedule-cron-input",
       type: "text",
       placeholder: "cron expression (e.g. 0 4 * * *)",
-      value: cronVal,
+      value: savedCron !== undefined ? savedCron : cronVal,
     });
 
     const enableLabel = el("label", { class: "schedule-toggle" });

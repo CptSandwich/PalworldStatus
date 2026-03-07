@@ -242,6 +242,16 @@ a:hover { color: var(--accent-hover); }
   letter-spacing: 0.5px;
 }
 
+.container-name-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
 .status-label {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -361,9 +371,10 @@ a:hover { color: var(--accent-hover); }
 }
 
 .player-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
   align-items: baseline;
-  justify-content: space-between;
   padding: 5px 0;
   border-bottom: 1px solid var(--bg-panel-alt);
 }
@@ -376,16 +387,24 @@ a:hover { color: var(--accent-hover); }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 55%;
+  min-width: 0;
 }
 
-.player-stats {
+.player-level {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
+
+.player-coords {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-secondary);
-  text-align: right;
   white-space: nowrap;
   letter-spacing: 0.5px;
+  text-align: right;
 }
 
 .server-card-footer {
@@ -950,10 +969,58 @@ a:hover { color: var(--accent-hover); }
 
 /* ── Responsive ─────────────────────────────────────────────────────────────── */
 
-@media (max-width: 640px) {
+@media (max-width: 768px) {
+  /* Header */
+  .site-header { padding: 0 12px; height: auto; min-height: 52px; flex-wrap: wrap; gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+  .header-name { display: none; }  /* hide name, keep avatar + logout */
+
+  /* Dashboard padding */
+  .dashboard { padding: 12px; gap: 16px; }
+
+  /* Section headers */
+  .section-header { flex-wrap: wrap; gap: 8px; }
+
+  /* Server grid */
   .server-grid { grid-template-columns: 1fr; }
-  .auth-panel { padding: 32px 24px; min-width: 0; width: 90vw; }
-  .data-table th, .data-table td { padding: 6px 8px; }
-  .section-header { flex-direction: column; align-items: flex-start; gap: 8px; }
-  .timed-action-panel { flex-direction: column; align-items: flex-start; }
+
+  /* Detail header */
+  .detail-header { flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .detail-server-name { font-size: 18px; }
+
+  /* Player row — stack coords below name+level on narrow screens */
+  .player-row { grid-template-columns: 1fr auto; }
+  .player-coords { grid-column: 1 / -1; text-align: left; color: var(--text-muted); }
+
+  /* Tables — allow horizontal scroll */
+  .data-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .data-table th, .data-table td { padding: 6px 8px; white-space: nowrap; }
+
+  /* Schedule rows */
+  .schedule-row { flex-wrap: wrap; }
+  .schedule-name { min-width: 0; width: 100%; }
+  .schedule-cron-input { min-width: 0; width: 100%; }
+
+  /* Timed action panel */
+  .timed-action-panel { flex-wrap: wrap; gap: 8px; }
+
+  /* Broadcast */
+  .broadcast-input { min-height: 60px; }
+
+  /* Map */
+  .map-container { max-height: 50vh; }
+
+  /* Auth panel */
+  .auth-panel { padding: 24px 16px; min-width: 0; width: 92vw; }
+
+  /* Chat log */
+  .chat-log { max-height: 200px; }
+}
+
+@media (max-width: 480px) {
+  .site-title { font-size: 16px; }
+  .detail-server-name { font-size: 15px; }
+  .section-title { font-size: 14px; }
+  .server-card-footer { flex-wrap: wrap; }
+  .calib-input-row { flex-direction: column; }
+  .calib-btn-row { flex-wrap: wrap; }
 }

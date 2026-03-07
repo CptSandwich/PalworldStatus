@@ -27,8 +27,9 @@ const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 // NOTE: These patterns are best-guess based on known Palworld log formats.
 // Adjust if the server version produces different output.
 const CHAT_PATTERNS: RegExp[] = [
-  /LogPalChat: GlobalMessage From \[(.+?)\] : (.+)/i,
-  /\[Chat\] (.+?): (.+)/i,
+  /\[CHAT\] <(.+?)> (.+)/i,                             // [date] [CHAT] <Name> message
+  /LogPalChat: GlobalMessage From \[(.+?)\] : (.+)/i,   // LogPalChat: GlobalMessage From [Name] : message
+  /\[Chat\] (.+?): (.+)/i,                              // [Chat] Name: message
 ];
 
 // Steam IDs are 17-digit numbers
@@ -123,10 +124,10 @@ export async function scanLogsForPlayers(container: PalworldContainer): Promise<
 
     if (foundIds.size > 0) {
       for (const steamId of foundIds) {
-        upsertPlayer(steamId, `Player ${steamId.slice(-4)}`, container.displayName);
+        upsertPlayer(steamId, `Player ${steamId.slice(-4)}`, container.name);
       }
       console.log(
-        `[chatlog] Pre-populated ${foundIds.size} player(s) from ${container.displayName} logs`
+        `[chatlog] Pre-populated ${foundIds.size} player(s) from ${container.name} logs`
       );
     }
   } catch {

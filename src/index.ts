@@ -28,6 +28,7 @@ import {
   deleteSchedule,
   getDb,
   getChatLog,
+  insertChatMessage,
   insertLocationPoint,
   getLastLocationPoint,
   getLocationHistory,
@@ -100,7 +101,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
       // Register idle tracker (no-op if already registered)
       registerIdleTracker({
         containerId: container.id,
-        containerName: container.displayName,
+        containerName: container.name,
         restPort: container.restPort,
         restPassword: container.restPassword,
         idleShutdownMinutes: container.idleShutdownMinutes,
@@ -113,7 +114,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         return {
           id: container.id,
           serverId: container.serverId,
-          name: apiNameCache.get(container.id) ?? container.displayName,
+          name: apiNameCache.get(container.id) ?? container.name,
           dockerStatus: container.status,
           gameStatus: "offline" as const,
           version: null,
@@ -136,7 +137,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
 
       const ip = await getContainerIP(container.id);
       if (!ip) {
-        console.warn(`[status] ${container.displayName} (${container.id.slice(0, 12)}) → could not resolve container IP`);
+        console.warn(`[status] ${container.name} (${container.id.slice(0, 12)}) → could not resolve container IP`);
       }
 
       const [info, players] = await Promise.all([
@@ -154,19 +155,19 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         const elapsed = Date.now() - startedAt;
         if (elapsed < GAME_STARTUP_GRACE_MS) {
           gameStatus = "starting";
-          console.log(`[status] ${container.displayName} → gameStatus=starting (${Math.round(elapsed / 1000)}s elapsed)`);
+          console.log(`[status] ${container.name} → gameStatus=starting (${Math.round(elapsed / 1000)}s elapsed)`);
         } else {
           gameStatus = "crashed";
           if (ip) {
-            console.warn(`[status] ${container.displayName} → gameStatus=crashed (REST API unreachable at ${ip}:${container.restPort})`);
-            notifyCrashed(container.id, container.displayName);
+            console.warn(`[status] ${container.name} → gameStatus=crashed (REST API unreachable at ${ip}:${container.restPort})`);
+            notifyCrashed(container.id, container.name);
           }
         }
       }
 
       // Use server name from REST API; cache it for when server goes offline
       if (info?.serverName) apiNameCache.set(container.id, info.serverName);
-      const displayName = apiNameCache.get(container.id) ?? container.displayName;
+      const displayName = apiNameCache.get(container.id) ?? container.name;
 
       // Update player DB records, idle state, and location history
       if (players) {
@@ -205,6 +206,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         id: container.id,
         serverId: container.serverId,
         name: displayName,
+        containerName: container.name,
         dockerStatus: container.status,
         gameStatus,
         version: info?.version ?? null,
@@ -270,7 +272,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     logAudit("RESTART", {
       steamId: user.steamId,
       displayName: user.displayName,
-      containerName: container.displayName,
+      containerName: container.name,
       details: "immediate (admin)",
     });
   } else {
@@ -347,7 +349,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       logAudit("RESTART", {
         steamId: user.steamId,
         displayName: user.displayName,
-        containerName: container.displayName,
+        containerName: container.name,
         details: `${WHITELISTED_RESTART_MINUTES}-minute delayed restart`,
       });
     }, WHITELISTED_RESTART_MINUTES * 60_000);
@@ -357,7 +359,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     logAudit("RESTART_SCHEDULED", {
       steamId: user.steamId,
       displayName: user.displayName,
-      containerName: container.displayName,
+      containerName: container.name,
       details: `${WHITELISTED_RESTART_MINUTES}-minute restart scheduled by ${user.displayName}`,
     });
   }
@@ -385,7 +387,7 @@ app.post("/api/containers/:id/start", requireWhitelisted, async (c) => {
   logAudit("START", {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.displayName,
+    containerName: container.name,
   });
 
   return c.json({ ok: true });
@@ -411,7 +413,7 @@ app.post("/api/containers/:id/stop", requireAdmin, async (c) => {
   logAudit("STOP", {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.displayName,
+    containerName: container.name,
   });
 
   return c.json({ ok: true });
@@ -445,10 +447,12 @@ app.post("/api/containers/:id/broadcast", requireAdmin, async (c) => {
 
   await broadcast(ip, container.restPort, container.restPassword, msg);
 
+  insertChatMessage(containerId, null, `[Broadcast] ${msg}`);
+
   logAudit("BROADCAST", {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.displayName,
+    containerName: container.name,
     details: msg,
   });
 
@@ -519,7 +523,7 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
     logAudit(`TIMED_${body.action.toUpperCase()}`, {
       steamId: user.steamId,
       displayName: user.displayName,
-      containerName: container.displayName,
+      containerName: container.name,
       details: `minutes=${minutes}`,
     });
   }
@@ -561,7 +565,7 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
   logAudit(`SCHEDULE_${body.action.toUpperCase()}`, {
     steamId: user.steamId,
     displayName: user.displayName,
-    containerName: container.displayName,
+    containerName: container.name,
     details: `minutes=${minutes}`,
   });
 
