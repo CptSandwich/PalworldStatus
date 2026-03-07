@@ -9,6 +9,8 @@ export interface ServerInfo {
   worldguid: string;
   maxplayers: number;
   currentplayers: number;
+  // Resolved fields (mapped from API response)
+  serverName: string;
 }
 
 export interface PlayerInfo {
@@ -56,7 +58,10 @@ export async function getServerInfo(
   port: number,
   password: string
 ): Promise<ServerInfo | null> {
-  return palworldFetch<ServerInfo>(ip, port, password, "/v1/api/server/info");
+  const data = await palworldFetch<ServerInfo>(ip, port, password, "/v1/api/info");
+  if (!data) return null;
+  // Normalise: API returns "servername" field; expose as "serverName" for convenience
+  return { ...data, serverName: data.servername ?? "" };
 }
 
 export async function getPlayers(
@@ -79,7 +84,7 @@ export async function broadcast(
   password: string,
   message: string
 ): Promise<boolean> {
-  const result = await palworldFetch(ip, port, password, "/v1/api/server/announce", {
+  const result = await palworldFetch(ip, port, password, "/v1/api/announce", {
     method: "POST",
     body: JSON.stringify({ message }),
   });
@@ -92,7 +97,7 @@ export async function gracefulStop(
   password: string,
   message = "Server is shutting down."
 ): Promise<boolean> {
-  const result = await palworldFetch(ip, port, password, "/v1/api/server/stop", {
+  const result = await palworldFetch(ip, port, password, "/v1/api/stop", {
     method: "POST",
     body: JSON.stringify({ waittime: 1, message }),
   });

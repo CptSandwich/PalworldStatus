@@ -22,15 +22,15 @@ A self-hosted dashboard for monitoring Palworld dedicated servers running on Unr
 
 ## Tech stack
 
-| Layer | Choice |
-|---|---|
-| Runtime | [Bun](https://bun.sh) |
-| HTTP | [Hono](https://hono.dev) |
-| Database | `bun:sqlite` (built-in) |
-| Docker client | [dockerode](https://github.com/apocas/dockerode) |
-| Steam auth | [node-steam-openid](https://github.com/nicklvsa/node-steam-openid) |
-| Cron | [node-cron](https://github.com/node-cron/node-cron) |
-| Frontend | Vanilla HTML/CSS/JS — no build step |
+| Layer         | Choice                                                             |
+| ------------- | ------------------------------------------------------------------ |
+| Runtime       | [Bun](https://bun.sh)                                              |
+| HTTP          | [Hono](https://hono.dev)                                           |
+| Database      | `bun:sqlite` (built-in)                                            |
+| Docker client | [dockerode](https://github.com/apocas/dockerode)                   |
+| Steam auth    | [node-steam-openid](https://github.com/nicklvsa/node-steam-openid) |
+| Cron          | [node-cron](https://github.com/node-cron/node-cron)                |
+| Frontend      | Vanilla HTML/CSS/JS — no build step                                |
 
 ---
 
@@ -51,14 +51,14 @@ Restart each Palworld container after making this change.
 
 Add these Docker labels to each Palworld container (via Unraid's "Extra Parameters" field or your `docker-compose.yml`):
 
-| Label | Required | Description |
-|---|---|---|
-| `palworld-status.enabled` | Yes | Set to `true` to include this container |
-| `palworld-status.name` | No | Display name (defaults to container name) |
-| `palworld-status.rest-port` | No | REST API port (default: `8212`) |
-| `palworld-status.rest-password` | Yes | Palworld server admin password (for REST API auth) |
-| `palworld-status.allow-start` | No | Set to `true` to allow starting from the dashboard |
-| `palworld-status.idle-shutdown-minutes` | No | Auto-shutdown after N minutes idle (omit for always-on servers) |
+| Label                                   | Required | Description                                                     |
+| --------------------------------------- | -------- | --------------------------------------------------------------- |
+| `palworld-status.enabled`               | Yes      | Set to `true` to include this container                         |
+| `palworld-status.name`                  | No       | Display name (defaults to container name)                       |
+| `palworld-status.rest-port`             | No       | REST API port (default: `8212`)                                 |
+| `palworld-status.rest-password`         | Yes      | Palworld server admin password (for REST API auth)              |
+| `palworld-status.allow-start`           | No       | Set to `true` to allow starting from the dashboard              |
+| `palworld-status.idle-shutdown-minutes` | No       | Auto-shutdown after N minutes idle (omit for always-on servers) |
 
 > **Important:** Do not expose port 8212 to the host or internet. PalworldStatus queries it over the internal Docker network automatically.
 
@@ -70,23 +70,23 @@ Add these Docker labels to each Palworld container (via Unraid's "Extra Paramete
 
 In Unraid → Docker → Add Container:
 
-| Field | Value |
-|---|---|
-| Repository | `ghcr.io/cptsandwich/palworldstatus:latest` |
-| Port | Host `3000` → Container `3000` |
+| Field            | Value                                                                       |
+| ---------------- | --------------------------------------------------------------------------- |
+| Repository       | `ghcr.io/cptsandwich/palworldstatus:latest`                                 |
+| Port             | Host `3000` → Container `3000`                                              |
 | Extra Parameters | `--mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock` |
-| Volume | `/mnt/user/appdata/palworld-status` → `/app/data` |
+| Volume           | `/mnt/user/appdata/palworld-status` → `/app/data`                           |
 
 ### Step 2 — Set environment variables
 
-| Variable | Required | Description |
-|---|---|---|
-| `ADMIN_STEAM_ID` | Yes | Your Steam 64-bit ID — grants full admin access. Find yours at [steamid.io](https://steamid.io) |
-| `STEAM_API_KEY` | Yes | Steam Web API key from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) |
-| `STEAM_REALM` | Yes | Public base URL of this app, e.g. `https://palworld.yourdomain.com` |
-| `PUBLIC_HOST` | Yes | Hostname shown to users for server connections, e.g. `palworld.yourdomain.com` |
-| `SESSION_SECRET` | Yes | Long random string for signing session cookies (32+ chars) |
-| `PORT` | No | HTTP port (default: `3000`) |
+| Variable         | Required | Description                                                                                     |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `ADMIN_STEAM_ID` | Yes      | Your Steam 64-bit ID — grants full admin access. Find yours at [steamid.io](https://steamid.io) |
+| `STEAM_API_KEY`  | Yes      | Steam Web API key from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey)   |
+| `STEAM_REALM`    | Yes      | Public base URL of this app, e.g. `https://palworld.yourdomain.com`                             |
+| `PUBLIC_HOST`    | Yes      | Hostname shown to users for server connections, e.g. `palworld.yourdomain.com`                  |
+| `SESSION_SECRET` | Yes      | Long random string for signing session cookies (32+ chars)                                      |
+| `PORT`           | No       | HTTP port (default: `3000`)                                                                     |
 
 ### Step 3 — Reverse proxy (required for Steam login)
 
@@ -165,12 +165,12 @@ Drop a Palworld world map image at `public/palworld-map.jpg`. The coordinate tra
 
 ## Troubleshooting
 
-| Problem | Check |
-|---|---|
-| "Not authorised" on first login | Verify `ADMIN_STEAM_ID` matches your Steam 64-bit ID exactly (use steamid.io) |
-| Server shows CRASHED | Ensure `RESTAPIEnabled=True` in `PalWorldSettings.ini` and `rest-password` label is set |
-| Steam login loops or fails | Verify `STEAM_REALM` matches your exact public URL including `https://` |
-| Containers not detected | Ensure `palworld-status.enabled=true` label is set and all containers share a Docker network |
+| Problem                         | Check                                                                                        |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| "Not authorised" on first login | Verify `ADMIN_STEAM_ID` matches your Steam 64-bit ID exactly (use steamid.io)                |
+| Server shows CRASHED            | Ensure `RESTAPIEnabled=True` in `PalWorldSettings.ini` and `rest-password` label is set      |
+| Steam login loops or fails      | Verify `STEAM_REALM` matches your exact public URL including `https://`                      |
+| Containers not detected         | Ensure `palworld-status.enabled=true` label is set and all containers share a Docker network |
 
 ---
 

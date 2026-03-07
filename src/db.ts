@@ -32,14 +32,20 @@ function initSchema() {
 
   db.run(`
     CREATE TABLE IF NOT EXISTS known_players (
-      steam_id     TEXT PRIMARY KEY,
-      display_name TEXT NOT NULL,
-      first_seen   TEXT NOT NULL DEFAULT (datetime('now')),
-      last_seen    TEXT NOT NULL DEFAULT (datetime('now')),
-      last_server  TEXT,
-      status       TEXT NOT NULL DEFAULT 'blacklisted'
+      steam_id      TEXT PRIMARY KEY,
+      display_name  TEXT NOT NULL,
+      character_name TEXT,
+      first_seen    TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen     TEXT NOT NULL DEFAULT (datetime('now')),
+      last_server   TEXT,
+      status        TEXT NOT NULL DEFAULT 'blacklisted'
     )
   `);
+
+  // Migrate existing known_players table: add character_name if missing
+  try {
+    db.run("ALTER TABLE known_players ADD COLUMN character_name TEXT");
+  } catch { /* column already exists */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS restart_schedules (
@@ -58,6 +64,38 @@ function initSchema() {
       idle_since   TEXT,
       shutdown_at  TEXT
     )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chat_log (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      container_id  TEXT NOT NULL,
+      timestamp     TEXT NOT NULL DEFAULT (datetime('now')),
+      player_name   TEXT,
+      message       TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_chat_log_container
+      ON chat_log(container_id, id DESC)
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS player_location_history (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      container_id   TEXT NOT NULL,
+      steam_id       TEXT NOT NULL,
+      character_name TEXT,
+      x              REAL NOT NULL,
+      y              REAL NOT NULL,
+      timestamp      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_plh_lookup
+      ON player_location_history(container_id, steam_id, id DESC)
   `);
 }
 
@@ -108,6 +146,7 @@ export function getRecentAuditLog(limit = 50): AuditEntry[] {
 export interface KnownPlayer {
   steam_id: string;
   display_name: string;
+  character_name: string | null;
   first_seen: string;
   last_seen: string;
   last_server: string | null;
@@ -117,16 +156,18 @@ export interface KnownPlayer {
 export function upsertPlayer(
   steamId: string,
   displayName: string,
-  serverName: string
+  serverName: string,
+  characterName?: string
 ) {
   getDb().run(
-    `INSERT INTO known_players (steam_id, display_name, last_seen, last_server)
-     VALUES (?, ?, datetime('now'), ?)
+    `INSERT INTO known_players (steam_id, display_name, character_name, last_seen, last_server)
+     VALUES (?, ?, ?, datetime('now'), ?)
      ON CONFLICT(steam_id) DO UPDATE SET
-       display_name = excluded.display_name,
-       last_seen    = excluded.last_seen,
-       last_server  = excluded.last_server`,
-    [steamId, displayName, serverName]
+       display_name   = excluded.display_name,
+       character_name = COALESCE(excluded.character_name, character_name),
+       last_seen      = excluded.last_seen,
+       last_server    = excluded.last_server`,
+    [steamId, displayName, characterName ?? null, serverName]
   );
 }
 
@@ -269,4 +310,89 @@ export function getAllArmedIdleStates(): IdleState[] {
   return getDb()
     .query(`SELECT * FROM idle_state WHERE armed = 1`)
     .all() as IdleState[];
+}
+
+// ── Chat log ──────────────────────────────────────────────────────────────────
+
+export interface ChatEntry {
+  id: number;
+  container_id: string;
+  timestamp: string;
+  player_name: string | null;
+  message: string;
+}
+
+export function insertChatMessage(
+  containerId: string,
+  playerName: string | null,
+  message: string
+) {
+  try {
+    getDb().run(
+      `INSERT INTO chat_log (container_id, player_name, message) VALUES (?, ?, ?)`,
+      [containerId, playerName ?? null, message]
+    );
+  } catch (err) {
+    console.warn("[db] Failed to insert chat message:", err);
+  }
+}
+
+export function getChatLog(containerId: string, limit = 100): ChatEntry[] {
+  const rows = getDb()
+    .query(`SELECT * FROM chat_log WHERE container_id = ? ORDER BY id DESC LIMIT ?`)
+    .all(containerId, limit) as ChatEntry[];
+  return rows.reverse();
+}
+
+// ── Location history ──────────────────────────────────────────────────────────
+
+export interface LocationPoint {
+  id: number;
+  container_id: string;
+  steam_id: string;
+  character_name: string | null;
+  x: number;
+  y: number;
+  timestamp: string;
+}
+
+export function insertLocationPoint(
+  containerId: string,
+  steamId: string,
+  characterName: string | null,
+  x: number,
+  y: number
+) {
+  try {
+    getDb().run(
+      `INSERT INTO player_location_history (container_id, steam_id, character_name, x, y)
+       VALUES (?, ?, ?, ?, ?)`,
+      [containerId, steamId, characterName ?? null, x, y]
+    );
+  } catch (err) {
+    console.warn("[db] Failed to insert location point:", err);
+  }
+}
+
+export function getLastLocationPoint(
+  containerId: string,
+  steamId: string
+): LocationPoint | null {
+  return getDb()
+    .query(
+      `SELECT * FROM player_location_history
+       WHERE container_id = ? AND steam_id = ?
+       ORDER BY id DESC LIMIT 1`
+    )
+    .get(containerId, steamId) as LocationPoint | null;
+}
+
+export function getLocationHistory(containerId: string): LocationPoint[] {
+  return getDb()
+    .query(
+      `SELECT * FROM player_location_history
+       WHERE container_id = ?
+       ORDER BY steam_id, id ASC`
+    )
+    .all(containerId) as LocationPoint[];
 }

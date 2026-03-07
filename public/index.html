@@ -6,7 +6,7 @@
   <title>PalworldStatus</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Noto+Sans:wght@400;600&family=Oxanium:wght@400;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Noto+Sans:wght@400;600&family=Oxanium:wght@400;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -34,72 +34,10 @@
 
 <!-- ── Main dashboard (whitelisted + admin) ──────────────────────────────────── -->
 <main class="dashboard" id="dashboard">
-
-  <!-- Server cards -->
-  <section class="server-grid" id="server-grid">
-    <!-- Populated by app.js -->
-  </section>
-
-  <!-- Player map -->
-  <section class="map-section" id="map-section">
-    <div class="section-header">
-      <h2 class="section-title">World Map</h2>
-      <div class="map-tabs" id="map-tabs">
-        <!-- Tab buttons populated by app.js -->
-      </div>
-    </div>
-    <div class="map-container">
-      <img id="map-image" src="/palworld-map.jpg" alt="Palworld World Map" />
-      <canvas id="map-canvas"></canvas>
-    </div>
-  </section>
-
-  <!-- Audit log -->
-  <section class="audit-section">
-    <h2 class="section-title">Audit Log</h2>
-    <table class="data-table" id="audit-table">
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>User</th>
-          <th>Action</th>
-          <th>Server</th>
-          <th>Details</th>
-        </tr>
-      </thead>
-      <tbody id="audit-body">
-        <!-- Populated by app.js -->
-      </tbody>
-    </table>
-  </section>
-
-  <!-- Player management (admin only) -->
-  <section class="admin-section" id="player-management" data-admin-only>
-    <h2 class="section-title">Player Management</h2>
-    <table class="data-table" id="players-table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>First Seen</th>
-          <th>Last Seen</th>
-          <th>Last Server</th>
-          <th>Access</th>
-        </tr>
-      </thead>
-      <tbody id="players-body">
-        <!-- Populated by app.js -->
-      </tbody>
-    </table>
-  </section>
-
-  <!-- Restart schedules (admin only) -->
-  <section class="admin-section" id="restart-schedules" data-admin-only>
-    <h2 class="section-title">Restart Schedules</h2>
-    <div id="schedules-list">
-      <!-- Populated by app.js -->
-    </div>
-  </section>
-
+  <!-- Content rendered by app.js based on URL hash -->
+  <!-- Landing view: #  -->
+  <!-- Detail view:  #server/{containerId} -->
+  <div id="view-root"></div>
 </main>
 
 <script src="/app.js"></script>
