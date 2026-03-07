@@ -185,11 +185,16 @@ export function upsertPlayer(
 
 /** Insert a player record only if one doesn't already exist. Used for log-scan
  *  pre-population so we never overwrite a real name with a placeholder. */
-export function insertPlayerIfNew(steamId: string, displayName: string, serverName: string) {
+/** Upsert a player from Steam auth — updates display_name and last_seen only,
+ *  preserving last_server and character_name if already set. */
+export function upsertPlayerAuth(steamId: string, displayName: string) {
   getDb().run(
-    `INSERT OR IGNORE INTO known_players (steam_id, display_name, last_seen, last_server)
-     VALUES (?, ?, datetime('now'), ?)`,
-    [steamId, displayName, serverName]
+    `INSERT INTO known_players (steam_id, display_name, last_seen)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(steam_id) DO UPDATE SET
+       display_name = excluded.display_name,
+       last_seen    = excluded.last_seen`,
+    [steamId, displayName]
   );
 }
 

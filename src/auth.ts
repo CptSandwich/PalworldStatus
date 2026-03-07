@@ -1,6 +1,6 @@
 import type { Context, Next } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
-import { logAudit, getPlayerStatus } from "./db.js";
+import { logAudit, getPlayerStatus, upsertPlayerAuth } from "./db.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -154,6 +154,8 @@ export async function handleSteamCallback(c: Context) {
       avatarUrl: profile.avatar?.medium ?? "",
       role,
     };
+    // Record the player in known_players using their real Steam display name
+    upsertPlayerAuth(profile.steamid, profile.username);
     const token = createSession(user);
     setCookie(c, SESSION_COOKIE, token, {
       httpOnly: true,
