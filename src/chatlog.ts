@@ -118,7 +118,10 @@ export async function scanLogsForPlayers(container: PalworldContainer): Promise<
         const matches = [...line.matchAll(JOIN_STEAM_PATTERN)];
         for (const m of matches) {
           // Steam64 IDs always start with 7656119 — filter out false positives
-          if (m[1].startsWith("7656119")) foundIds.add(m[1]);
+          // Also skip the admin Steam ID; they'll get a real entry from the REST API
+          if (m[1].startsWith("7656119") && m[1] !== (process.env.ADMIN_STEAM_ID ?? "")) {
+            foundIds.add(m[1]);
+          }
         }
       }
     }
