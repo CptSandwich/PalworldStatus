@@ -218,6 +218,10 @@ export function setPlayerStatus(
   );
 }
 
+export function deletePlayer(steamId: string) {
+  getDb().run(`DELETE FROM known_players WHERE steam_id = ?`, [steamId]);
+}
+
 // ── Restart schedules ─────────────────────────────────────────────────────────
 
 export interface RestartSchedule {

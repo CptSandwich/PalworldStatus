@@ -1271,14 +1271,19 @@ async function fetchAndRenderPlayers() {
         actionTd.appendChild(el("span", {
           style: "font-size:11px;color:var(--accent-purple);font-family:var(--font-mono);padding:2px 6px",
         }, "[admin]"));
-      } else if (p.status === "whitelisted") {
-        const blBtn = el("button", { class: "btn btn-small btn-danger" }, "✗ Blacklist");
-        blBtn.onclick = () => setPlayerStatus(p.steam_id, "blacklisted", blBtn);
-        actionTd.appendChild(blBtn);
       } else {
-        const wlBtn = el("button", { class: "btn btn-small" }, "✓ Whitelist");
-        wlBtn.onclick = () => setPlayerStatus(p.steam_id, "whitelisted", wlBtn);
-        actionTd.appendChild(wlBtn);
+        if (p.status === "whitelisted") {
+          const blBtn = el("button", { class: "btn btn-small btn-danger" }, "✗ Blacklist");
+          blBtn.onclick = () => setPlayerStatus(p.steam_id, "blacklisted", blBtn);
+          actionTd.appendChild(blBtn);
+        } else {
+          const wlBtn = el("button", { class: "btn btn-small" }, "✓ Whitelist");
+          wlBtn.onclick = () => setPlayerStatus(p.steam_id, "whitelisted", wlBtn);
+          actionTd.appendChild(wlBtn);
+        }
+        const delBtn = el("button", { class: "btn btn-small btn-danger", title: "Delete record" }, "🗑");
+        delBtn.onclick = () => deletePlayerRecord(p.steam_id, delBtn);
+        actionTd.appendChild(delBtn);
       }
       tr.appendChild(actionTd);
       tbody.appendChild(tr);
@@ -1293,6 +1298,23 @@ async function setPlayerStatus(steamId, status, btn) {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      alert(`Error: ${d.error ?? res.statusText}`);
+    } else {
+      await fetchAndRenderPlayers();
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deletePlayerRecord(steamId, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/known-players/${encodeURIComponent(steamId)}`, {
+      method: "DELETE",
     });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));

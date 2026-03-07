@@ -23,6 +23,7 @@ import {
   upsertPlayer,
   getAllPlayers,
   setPlayerStatus,
+  deletePlayer,
   getAllSchedules,
   upsertSchedule,
   deleteSchedule,
@@ -634,6 +635,24 @@ app.patch("/api/known-players/:steamId", requireAdmin, async (c) => {
   setPlayerStatus(steamId, body.status);
 
   logAudit(`PLAYER_${body.status.toUpperCase()}`, {
+    steamId: user.steamId,
+    displayName: user.displayName,
+    details: `target=${steamId}`,
+  });
+
+  return c.json({ ok: true });
+});
+
+app.delete("/api/known-players/:steamId", requireAdmin, async (c) => {
+  const user = getCurrentUser(c)!;
+  const steamId = c.req.param("steamId");
+
+  // Prevent admin from deleting their own record
+  if (steamId === user.steamId) return c.json({ error: "Cannot delete admin record" }, 403);
+
+  deletePlayer(steamId);
+
+  logAudit("PLAYER_DELETED", {
     steamId: user.steamId,
     displayName: user.displayName,
     details: `target=${steamId}`,
