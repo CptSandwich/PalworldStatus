@@ -3,7 +3,8 @@ import Dockerode from "dockerode";
 const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
 
 export interface PalworldContainer {
-  id: string;
+  id: string;       // Docker container ID (changes on recreation)
+  serverId: string; // Stable ID: label palworld-status.server-id ?? container name
   name: string;
   displayName: string;
   status: "running" | "stopped" | "starting";
@@ -52,6 +53,7 @@ export async function discoverPalworldContainers(): Promise<PalworldContainer[]>
 
     return {
       id: c.Id,
+      serverId: labels[`${LABEL_PREFIX}.server-id`] ?? rawName,
       name: rawName,
       displayName: labels[`${LABEL_PREFIX}.name`] ?? rawName,
       status,
@@ -71,11 +73,17 @@ export async function getContainerIP(containerId: string): Promise<string | null
   try {
     const info = await docker.getContainer(containerId).inspect();
     const networks = info.NetworkSettings?.Networks ?? {};
-    for (const net of Object.values(networks)) {
+    const networkMode = info.HostConfig?.NetworkMode ?? "unknown";
+    for (const [netName, net] of Object.entries(networks)) {
       if (net?.IPAddress) return net.IPAddress;
+      console.warn(`[docker] getContainerIP ${containerId.slice(0, 12)} — network "${netName}" has no IPAddress (mode: ${networkMode})`);
+    }
+    if (Object.keys(networks).length === 0) {
+      console.warn(`[docker] getContainerIP ${containerId.slice(0, 12)} — no networks attached (mode: ${networkMode})`);
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.warn(`[docker] getContainerIP ${containerId.slice(0, 12)} — inspect failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 }

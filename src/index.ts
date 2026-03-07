@@ -31,6 +31,9 @@ import {
   insertLocationPoint,
   getLastLocationPoint,
   getLocationHistory,
+  getMapCalibration,
+  saveMapCalibration,
+  clearMapCalibration,
 } from "./db.js";
 import {
   registerIdleTracker,
@@ -43,6 +46,7 @@ import {
 import { initScheduler, reloadSchedule, cancelJob } from "./scheduler.js";
 import { initChatLogStreams, startChatLogStream } from "./chatlog.js";
 import { MAP_CALIBRATION } from "./map.js";
+import { notifyCrashed, notifyOnline, notifyStopped, getCrashGuardInfo } from "./crashguard.js";
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
@@ -80,6 +84,14 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST ?? "localhost";
 const lastPositions = new Map<string, { x: number; y: number }>();
 const MIN_MOVE_DISTANCE = 5000; // ~50m in Unreal Engine world units
 
+// Cache of last known API-reported server names (populated when server is online)
+const apiNameCache = new Map<string, string>();
+
+// Track when each container first appeared as Docker-running so we can give the
+// game server a grace period to start before classifying it as "crashed"
+const containerFirstRunningAt = new Map<string, number>();
+const GAME_STARTUP_GRACE_MS = 2 * 60_000; // 2 minutes
+
 app.get("/api/status", requireWhitelisted, async (c) => {
   const containers = await discoverPalworldContainers();
 
@@ -95,9 +107,13 @@ app.get("/api/status", requireWhitelisted, async (c) => {
       });
 
       if (container.status !== "running") {
+        // Container stopped/restarting — clear grace period and crash guard
+        containerFirstRunningAt.delete(container.id);
+        notifyStopped(container.id);
         return {
           id: container.id,
-          name: container.displayName,
+          serverId: container.serverId,
+          name: apiNameCache.get(container.id) ?? container.displayName,
           dockerStatus: container.status,
           gameStatus: "offline" as const,
           version: null,
@@ -109,7 +125,13 @@ app.get("/api/status", requireWhitelisted, async (c) => {
           idleShutdownMinutes: container.idleShutdownMinutes ?? null,
           idleCountdownSeconds: null,
           pendingTimedAction: getPendingTimedAction(container.id),
+          crashGuard: null,
         };
+      }
+
+      // Record when this container first appeared as running (for startup grace period)
+      if (!containerFirstRunningAt.has(container.id)) {
+        containerFirstRunningAt.set(container.id, Date.now());
       }
 
       const ip = await getContainerIP(container.id);
@@ -122,13 +144,29 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         ip ? getPlayers(ip, container.restPort, container.restPassword) : null,
       ]);
 
-      const gameStatus = info ? "online" : "crashed";
-      if (!info && ip) {
-        console.warn(`[status] ${container.displayName} → gameStatus=crashed (REST API unreachable at ${ip}:${container.restPort})`);
+      let gameStatus: "online" | "starting" | "crashed";
+      if (info) {
+        gameStatus = "online";
+        containerFirstRunningAt.delete(container.id); // grace period no longer needed
+        notifyOnline(container.id);
+      } else {
+        const startedAt = containerFirstRunningAt.get(container.id) ?? Date.now();
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < GAME_STARTUP_GRACE_MS) {
+          gameStatus = "starting";
+          console.log(`[status] ${container.displayName} → gameStatus=starting (${Math.round(elapsed / 1000)}s elapsed)`);
+        } else {
+          gameStatus = "crashed";
+          if (ip) {
+            console.warn(`[status] ${container.displayName} → gameStatus=crashed (REST API unreachable at ${ip}:${container.restPort})`);
+            notifyCrashed(container.id, container.displayName);
+          }
+        }
       }
 
-      // Use server name from REST API; fall back to Docker label
-      const displayName = info?.serverName || container.displayName;
+      // Use server name from REST API; cache it for when server goes offline
+      if (info?.serverName) apiNameCache.set(container.id, info.serverName);
+      const displayName = apiNameCache.get(container.id) ?? container.displayName;
 
       // Update player DB records, idle state, and location history
       if (players) {
@@ -165,6 +203,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
 
       return {
         id: container.id,
+        serverId: container.serverId,
         name: displayName,
         dockerStatus: container.status,
         gameStatus,
@@ -183,9 +222,22 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         idleShutdownMinutes: container.idleShutdownMinutes ?? null,
         idleCountdownSeconds: getIdleCountdownSeconds(container.id),
         pendingTimedAction: getPendingTimedAction(container.id),
+        crashGuard: getCrashGuardInfo(container.id),
       };
     })
   );
+
+  // Deduplicate server names: if two servers share a name, append (2), (3), …
+  const nameCounts = new Map<string, number>();
+  for (const r of results) nameCounts.set(r.name, (nameCounts.get(r.name) ?? 0) + 1);
+  const nameSeenSoFar = new Map<string, number>();
+  for (const r of results) {
+    if ((nameCounts.get(r.name) ?? 0) > 1) {
+      const n = (nameSeenSoFar.get(r.name) ?? 0) + 1;
+      nameSeenSoFar.set(r.name, n);
+      if (n > 1) r.name = `${r.name} (${n})`;
+    }
+  }
 
   return c.json({ servers: results });
 });
@@ -206,20 +258,109 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
   const container = containers.find((x) => x.id === containerId);
   if (!container) return c.json({ error: "Not found" }, 404);
 
-  const ip = await getContainerIP(containerId);
-  if (ip) {
-    await broadcast(ip, container.restPort, container.restPassword,
-      "Server is restarting now.");
-    await new Promise((res) => setTimeout(res, 1000));
+  if (user.role === "admin") {
+    // Admin: immediate restart with a brief broadcast
+    const ip = await getContainerIP(containerId);
+    if (ip) {
+      await broadcast(ip, container.restPort, container.restPassword,
+        "Server is restarting now.");
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    await restartContainer(containerId);
+    logAudit("RESTART", {
+      steamId: user.steamId,
+      displayName: user.displayName,
+      containerName: container.displayName,
+      details: "immediate (admin)",
+    });
+  } else {
+    // Whitelisted user: 5-minute delayed restart via timed-action machinery
+    const WHITELISTED_RESTART_MINUTES = 5;
+
+    // Rate limiting: max 2 restarts per 24h, min 15 min gap between requests
+    const now = Date.now();
+    const history = (whitelistRestartHistory.get(user.steamId) ?? [])
+      .filter(ts => now - ts < WHITELIST_WINDOW_MS);
+
+    if (history.length >= WHITELIST_MAX_RESTARTS) {
+      const oldestTs = Math.min(...history);
+      const resetAt = oldestTs + WHITELIST_WINDOW_MS;
+      const waitMins = Math.ceil((resetAt - now) / 60_000);
+      return c.json({
+        error: `Restart limit reached (${WHITELIST_MAX_RESTARTS} per 24h). ` +
+          `You can request another restart in ${waitMins} minute${waitMins !== 1 ? "s" : ""}.`,
+      }, 429);
+    }
+
+    if (history.length > 0) {
+      const lastTs = Math.max(...history);
+      const cooldownRemaining = WHITELIST_COOLDOWN_MS - (now - lastTs);
+      if (cooldownRemaining > 0) {
+        const waitMins = Math.ceil(cooldownRemaining / 60_000);
+        return c.json({
+          error: `Please wait ${waitMins} more minute${waitMins !== 1 ? "s" : ""} before requesting another restart.`,
+        }, 429);
+      }
+    }
+
+    // Record this restart attempt before scheduling
+    history.push(now);
+    whitelistRestartHistory.set(user.steamId, history);
+
+    cancelTimedAction(containerId);
+
+    const executeAt = Date.now() + WHITELISTED_RESTART_MINUTES * 60_000;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const ip = await getContainerIP(containerId);
+
+    // Initial broadcast naming the initiator
+    if (ip) {
+      await broadcast(ip, container.restPort, container.restPassword,
+        `${user.displayName} has initiated a server restart. Restarting in ${WHITELISTED_RESTART_MINUTES} minutes.`);
+    }
+
+    // Warning broadcasts
+    const WARN_OFFSETS = [3, 2, 1, 0.5];
+    for (const off of WARN_OFFSETS) {
+      const delay = (WHITELISTED_RESTART_MINUTES - off) * 60_000;
+      if (delay > 0) {
+        timers.push(setTimeout(async () => {
+          if (!pendingTimedActions.has(containerId)) return;
+          const lip = await getContainerIP(containerId);
+          if (lip) {
+            const label = off >= 1 ? `${off} minute${off === 1 ? "" : "s"}` : "30 seconds";
+            await broadcast(lip, container.restPort, container.restPassword,
+              `Server restarting in ${label}.`);
+          }
+        }, delay));
+      }
+    }
+
+    const mainTimer = setTimeout(async () => {
+      pendingTimedActions.delete(containerId);
+      const lip = await getContainerIP(containerId);
+      if (lip) {
+        await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now.");
+        await new Promise((res) => setTimeout(res, 3000));
+      }
+      await restartContainer(containerId);
+      logAudit("RESTART", {
+        steamId: user.steamId,
+        displayName: user.displayName,
+        containerName: container.displayName,
+        details: `${WHITELISTED_RESTART_MINUTES}-minute delayed restart`,
+      });
+    }, WHITELISTED_RESTART_MINUTES * 60_000);
+    timers.push(mainTimer);
+
+    pendingTimedActions.set(containerId, { action: "restart", scheduledAt: Date.now(), executeAt, timers });
+    logAudit("RESTART_SCHEDULED", {
+      steamId: user.steamId,
+      displayName: user.displayName,
+      containerName: container.displayName,
+      details: `${WHITELISTED_RESTART_MINUTES}-minute restart scheduled by ${user.displayName}`,
+    });
   }
-
-  await restartContainer(containerId);
-
-  logAudit("RESTART", {
-    steamId: user.steamId,
-    displayName: user.displayName,
-    containerName: container.displayName,
-  });
 
   return c.json({ ok: true });
 });
@@ -250,7 +391,7 @@ app.post("/api/containers/:id/start", requireWhitelisted, async (c) => {
   return c.json({ ok: true });
 });
 
-app.post("/api/containers/:id/stop", requireWhitelisted, async (c) => {
+app.post("/api/containers/:id/stop", requireAdmin, async (c) => {
   const user = getCurrentUser(c)!;
   const containerId = c.req.param("id");
 
@@ -287,7 +428,7 @@ app.post("/api/containers/:id/cancel-idle", requireWhitelisted, async (c) => {
 
 // ── Broadcast ─────────────────────────────────────────────────────────────────
 
-app.post("/api/containers/:id/broadcast", requireWhitelisted, async (c) => {
+app.post("/api/containers/:id/broadcast", requireAdmin, async (c) => {
   const user = getCurrentUser(c)!;
   const containerId = c.req.param("id");
 
@@ -325,6 +466,13 @@ interface TimedAction {
 }
 const pendingTimedActions = new Map<string, TimedAction>();
 
+// ── Whitelisted restart rate limiting ─────────────────────────────────────────
+const WHITELIST_MAX_RESTARTS = 2;
+const WHITELIST_WINDOW_MS    = 24 * 60 * 60_000; // 24 hours
+const WHITELIST_COOLDOWN_MS  = 15 * 60_000;       // 15 min gap between restarts
+// steamId → timestamps of scheduled restarts within the current window
+const whitelistRestartHistory = new Map<string, number[]>();
+
 function getPendingTimedAction(containerId: string) {
   const ta = pendingTimedActions.get(containerId);
   if (!ta) return null;
@@ -332,7 +480,7 @@ function getPendingTimedAction(containerId: string) {
   return { action: ta.action, remainingSeconds };
 }
 
-app.post("/api/containers/:id/timed-action", requireWhitelisted, async (c) => {
+app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
   const user = getCurrentUser(c)!;
   const containerId = c.req.param("id");
 
@@ -420,7 +568,7 @@ app.post("/api/containers/:id/timed-action", requireWhitelisted, async (c) => {
   return c.json({ ok: true });
 });
 
-app.post("/api/containers/:id/cancel-timed-action", requireWhitelisted, async (c) => {
+app.post("/api/containers/:id/cancel-timed-action", requireAdmin, async (c) => {
   const containerId = c.req.param("id");
   cancelTimedAction(containerId);
   return c.json({ ok: true });
@@ -532,7 +680,40 @@ app.delete("/api/schedules/:containerId", requireAdmin, (c) => {
 // ── Map calibration ───────────────────────────────────────────────────────────
 
 app.get("/api/map-calibration", requireWhitelisted, (c) => {
-  return c.json(MAP_CALIBRATION);
+  const saved = getMapCalibration();
+  if (saved) return c.json({ ...saved, calibrated: true });
+  // Derive affine transform from community-estimated world bounds
+  const { worldMinX, worldMaxX, worldMinY, worldMaxY } = MAP_CALIBRATION;
+  const rangeX = worldMaxX - worldMinX;
+  const rangeY = worldMaxY - worldMinY;
+  return c.json({
+    scaleX: 1 / rangeX, offsetX: -worldMinX / rangeX,
+    scaleY: 1 / rangeY, offsetY: -worldMinY / rangeY,
+    calibrated: false,
+  });
+});
+
+app.post("/api/map-calibration", requireAdmin, async (c) => {
+  const body = await c.req.json() as {
+    points: { worldX: number; worldY: number; fracX: number; fracY: number }[];
+  };
+  const points = body?.points;
+  if (!Array.isArray(points) || points.length < 2)
+    return c.json({ error: "Two calibration points required" }, 400);
+  const [p1, p2] = points;
+  if (Math.abs(p2.worldX - p1.worldX) < 1 || Math.abs(p2.worldY - p1.worldY) < 1)
+    return c.json({ error: "Points are too close together on one axis" }, 400);
+  const scaleX  = (p2.fracX - p1.fracX) / (p2.worldX - p1.worldX);
+  const offsetX = p1.fracX - p1.worldX * scaleX;
+  const scaleY  = (p2.fracY - p1.fracY) / (p2.worldY - p1.worldY);
+  const offsetY = p1.fracY - p1.worldY * scaleY;
+  saveMapCalibration(p1, p2, scaleX, offsetX, scaleY, offsetY);
+  return c.json({ scaleX, offsetX, scaleY, offsetY, calibrated: true });
+});
+
+app.delete("/api/map-calibration", requireAdmin, (c) => {
+  clearMapCalibration();
+  return c.json({ ok: true });
 });
 
 // ── Static files ──────────────────────────────────────────────────────────────

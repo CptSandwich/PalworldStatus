@@ -97,6 +97,18 @@ function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_plh_lookup
       ON player_location_history(container_id, steam_id, id DESC)
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS map_calibration (
+      id         INTEGER PRIMARY KEY CHECK (id = 1),
+      p1_world_x REAL NOT NULL, p1_world_y REAL NOT NULL,
+      p1_frac_x  REAL NOT NULL, p1_frac_y  REAL NOT NULL,
+      p2_world_x REAL NOT NULL, p2_world_y REAL NOT NULL,
+      p2_frac_x  REAL NOT NULL, p2_frac_y  REAL NOT NULL,
+      scale_x    REAL NOT NULL, offset_x   REAL NOT NULL,
+      scale_y    REAL NOT NULL, offset_y   REAL NOT NULL
+    )
+  `);
 }
 
 // ── Audit log ─────────────────────────────────────────────────────────────────
@@ -395,4 +407,55 @@ export function getLocationHistory(containerId: string): LocationPoint[] {
        ORDER BY steam_id, id ASC`
     )
     .all(containerId) as LocationPoint[];
+}
+
+// ── Map calibration ────────────────────────────────────────────────────────────
+
+export interface MapCalibData {
+  scaleX: number; offsetX: number;
+  scaleY: number; offsetY: number;
+  p1WorldX: number; p1WorldY: number; p1FracX: number; p1FracY: number;
+  p2WorldX: number; p2WorldY: number; p2FracX: number; p2FracY: number;
+}
+
+export function getMapCalibration(): MapCalibData | null {
+  const row = getDb().query(`SELECT * FROM map_calibration WHERE id = 1`).get() as Record<string, number> | null;
+  if (!row) return null;
+  return {
+    scaleX: row.scale_x,   offsetX: row.offset_x,
+    scaleY: row.scale_y,   offsetY: row.offset_y,
+    p1WorldX: row.p1_world_x, p1WorldY: row.p1_world_y,
+    p1FracX:  row.p1_frac_x,  p1FracY:  row.p1_frac_y,
+    p2WorldX: row.p2_world_x, p2WorldY: row.p2_world_y,
+    p2FracX:  row.p2_frac_x,  p2FracY:  row.p2_frac_y,
+  };
+}
+
+export function saveMapCalibration(
+  p1: { worldX: number; worldY: number; fracX: number; fracY: number },
+  p2: { worldX: number; worldY: number; fracX: number; fracY: number },
+  scaleX: number, offsetX: number,
+  scaleY: number, offsetY: number,
+) {
+  getDb().run(
+    `INSERT INTO map_calibration
+       (id, p1_world_x, p1_world_y, p1_frac_x, p1_frac_y,
+            p2_world_x, p2_world_y, p2_frac_x, p2_frac_y,
+            scale_x, offset_x, scale_y, offset_y)
+     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       p1_world_x=excluded.p1_world_x, p1_world_y=excluded.p1_world_y,
+       p1_frac_x=excluded.p1_frac_x,   p1_frac_y=excluded.p1_frac_y,
+       p2_world_x=excluded.p2_world_x, p2_world_y=excluded.p2_world_y,
+       p2_frac_x=excluded.p2_frac_x,   p2_frac_y=excluded.p2_frac_y,
+       scale_x=excluded.scale_x, offset_x=excluded.offset_x,
+       scale_y=excluded.scale_y, offset_y=excluded.offset_y`,
+    [p1.worldX, p1.worldY, p1.fracX, p1.fracY,
+     p2.worldX, p2.worldY, p2.fracX, p2.fracY,
+     scaleX, offsetX, scaleY, offsetY],
+  );
+}
+
+export function clearMapCalibration() {
+  getDb().run(`DELETE FROM map_calibration WHERE id = 1`);
 }

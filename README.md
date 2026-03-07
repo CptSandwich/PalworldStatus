@@ -9,14 +9,22 @@ A self-hosted dashboard for monitoring Palworld dedicated servers running on Unr
 ## Features
 
 - **Steam login** — friends authenticate with their real Steam accounts; no passwords to manage
-- **Server status cards** — live Docker + game state (Online / Crashed / Offline / Starting), version, player count, connection string with one-click copy
-- **Live player map** — world-coordinate player dots on a static map image, updated every 30 seconds
-- **Admin actions** — restart, start, and stop containers from the dashboard (with in-game broadcast warnings)
-- **Idle auto-shutdown** — opt-in per server; shuts down after 10 minutes with no players, with progressive in-game warnings
+- **Server status cards** — live Docker + game state (Online / Starting / Crashed / Offline), version, player count, connection string with one-click copy
+- **Legacy/Current badges** — cards indicate whether a server has idle-shutdown enabled (Legacy) or not (Current)
+- **Live player map** — zoomable/pannable world map with player dots updated every 30 seconds
+- **Map calibration UI** — admin clicks two known landmarks on the map and enters their world coordinates; the app derives the exact transform automatically
+- **Player location history** — optional trail overlay per player with per-player visibility toggles
+- **On-demand timed actions** — admin schedules a restart or shutdown with a countdown and configurable minutes; in-game broadcast warnings fire automatically
+- **Custom broadcasts** — admin sends freeform in-game messages from the dashboard
+- **Chat log** — server chat streamed from Docker container logs and shown in the detail view
+- **Idle auto-shutdown** — opt-in per server; shuts down after N minutes with no players, with progressive in-game warnings
+- **Crash detection & auto-restart** — if the game process becomes unreachable while the container is running, PalworldStatus waits 1 minute then restarts the container automatically; gives up after 3 attempts in 10 minutes to avoid crash loops
+- **Startup grace period** — a newly started container shows "Starting" for up to 2 minutes before being considered crashed, avoiding false alarms during game server boot
 - **Scheduled restarts** — admin sets a cron expression per server; broadcasts warnings before each restart
 - **Whitelist management** — admin promotes/demotes players; all others are denied by default
 - **Audit log** — every admin action and denied login attempt is recorded
 - **Auto-discovery** — Palworld containers are found via Docker labels; no config file needed
+- **Stable server IDs** — server URLs use a stable ID (container name or explicit label) that survives container recreation
 
 ---
 
@@ -51,14 +59,15 @@ Restart each Palworld container after making this change.
 
 Add these Docker labels to each Palworld container (via Unraid's "Extra Parameters" field or your `docker-compose.yml`):
 
-| Label                                   | Required | Description                                                     |
-| --------------------------------------- | -------- | --------------------------------------------------------------- |
-| `palworld-status.enabled`               | Yes      | Set to `true` to include this container                         |
-| `palworld-status.name`                  | No       | Display name (defaults to container name)                       |
-| `palworld-status.rest-port`             | No       | REST API port (default: `8212`)                                 |
-| `palworld-status.rest-password`         | Yes      | Palworld server admin password (for REST API auth)              |
-| `palworld-status.allow-start`           | No       | Set to `true` to allow starting from the dashboard              |
-| `palworld-status.idle-shutdown-minutes` | No       | Auto-shutdown after N minutes idle (omit for always-on servers) |
+| Label                                   | Required | Description                                                                  |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------- |
+| `palworld-status.enabled`               | Yes      | Set to `true` to include this container                                      |
+| `palworld-status.rest-password`         | Yes      | Palworld server admin password (for REST API auth)                           |
+| `palworld-status.name`                  | No       | Display name fallback (overridden by the name reported by the game REST API) |
+| `palworld-status.server-id`             | No       | Stable ID used in URLs (default: container name)                             |
+| `palworld-status.rest-port`             | No       | REST API port (default: `8212`)                                              |
+| `palworld-status.allow-start`           | No       | Set to `true` to allow starting from the dashboard                           |
+| `palworld-status.idle-shutdown-minutes` | No       | Auto-shutdown after N minutes idle (omit for always-on servers)              |
 
 > **Important:** Do not expose port 8212 to the host or internet. PalworldStatus queries it over the internal Docker network automatically.
 
@@ -114,9 +123,41 @@ Ensure all containers (both Palworld servers and `palworld-status`) are on the s
 
 ---
 
+## Player map
+
+Place the Palworld world map image at `public/palworld-map.webp`.
+
+**Map image:** [Palpagos Islands (Tides of Terraria Update)](https://palworld.wiki.gg) — sourced from the [Palworld Wiki](https://palworld.wiki.gg) (Fandom), used for non-commercial self-hosted monitoring purposes.
+Original URL: `https://static.wikia.nocookie.net/palworld/images/b/ba/Palpagos_Islands_Tides_of_Terraria_Update.png`
+
+### Calibrating the map
+
+The first time you open a server's detail page as admin, click **"Calibrate Map"** in the World Map section header:
+
+1. Pan/zoom the map to a landmark where you know a player's position
+2. Click that location on the map — a red marker appears
+3. Enter the player's world coordinates (shown in the live player list as reference)
+4. Repeat for a second distant landmark
+5. Click **"Save Calibration"** — player dots will now appear in the correct positions
+
+Calibration is stored in the database and shared across all servers. Use **"Reset to Default"** to revert to the community-estimated coordinate bounds.
+
+---
+
 ## Scheduled restarts
 
 In the admin panel, enter a cron expression per server (e.g. `0 4 * * *` for 4am daily) and enable it. The app will broadcast in-game warnings at −10/−5/−3/−2/−1 min and −30 sec before each restart, then gracefully stop and restart the container.
+
+---
+
+## Crash auto-restart
+
+When a container is running but the game REST API is unreachable, PalworldStatus will:
+
+1. Show the server as **Starting** for up to 2 minutes (grace period for game server boot)
+2. After the grace period, mark the server as **Crashed**
+3. Wait 1 minute, then automatically restart the container
+4. If the server crashes and is restarted **3 times within 10 minutes**, auto-restart is disabled to prevent a crash loop — a warning appears on the card
 
 ---
 
@@ -157,20 +198,18 @@ See [SECURITY.md](SECURITY.md) for full details.
 
 ---
 
-## Player map
-
-Drop a Palworld world map image at `public/palworld-map.jpg`. The coordinate transform in `src/map.ts` maps UE world coordinates to pixel positions — calibrate the constants against known in-game landmark coordinates once you have a map image.
-
----
-
 ## Troubleshooting
 
-| Problem                         | Check                                                                                        |
-| ------------------------------- | -------------------------------------------------------------------------------------------- |
-| "Not authorised" on first login | Verify `ADMIN_STEAM_ID` matches your Steam 64-bit ID exactly (use steamid.io)                |
-| Server shows CRASHED            | Ensure `RESTAPIEnabled=True` in `PalWorldSettings.ini` and `rest-password` label is set      |
-| Steam login loops or fails      | Verify `STEAM_REALM` matches your exact public URL including `https://`                      |
-| Containers not detected         | Ensure `palworld-status.enabled=true` label is set and all containers share a Docker network |
+| Problem                          | Check                                                                                                                                   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| "Not authorised" on first login  | Verify `ADMIN_STEAM_ID` matches your Steam 64-bit ID exactly (use steamid.io)                                                           |
+| Server shows Crashed             | Ensure `RESTAPIEnabled=True` in `PalWorldSettings.ini` and `rest-password` label is set; check container logs for `[palworld]` warnings |
+| Server shows Crashed immediately | Container may still be booting — it will show "Starting" for 2 minutes before being considered crashed                                  |
+| Containers not detected          | Ensure `palworld-status.enabled=true` label is set and all containers share a Docker network                                            |
+| IP resolution fails              | Check container logs for `[docker] getContainerIP` warnings; ensure containers are on a bridge network with IP addresses                |
+| Steam login loops or fails       | Verify `STEAM_REALM` matches your exact public URL including `https://`                                                                 |
+| Player dots in wrong position    | Use the "Calibrate Map" button (admin) to set two reference points                                                                      |
+| Auto-restart disabled warning    | Server crashed 3 times in 10 minutes; investigate root cause then restart manually to reset the counter                                 |
 
 ---
 

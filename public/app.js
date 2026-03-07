@@ -18,6 +18,12 @@ let detailHiddenPlayers = new Set(); // steamIds hidden in history view
 let detailHistoryData = null;        // cached history response
 let detailMapImg = null;             // <img> element for detail map
 let detailCanvas = null;             // <canvas> for detail map
+let detailMapInner = null;           // <div> that gets CSS zoom/pan transform
+let mapZoom = 1;
+let mapPanX = 0;
+let mapPanY = 0;
+let mapEventCleanup = null;          // fn to remove window drag listeners
+let calibState = null;               // null | { step, points[], pendingFracX, pendingFracY }
 
 // Player dot colours (cycle through palette)
 const DOT_COLORS = ["#3ecfcf", "#4caf6e", "#9b6bdf", "#e05252", "#f0c040", "#5ab4e0"];
@@ -143,6 +149,10 @@ function onHashChange() {
     detailHistoryData = null;
     detailMapImg = null;
     detailCanvas = null;
+    detailMapInner = null;
+    mapZoom = 1; mapPanX = 0; mapPanY = 0;
+    calibState = null;
+    if (mapEventCleanup) { mapEventCleanup(); mapEventCleanup = null; }
   } else {
     detailContainerId = null;
   }
@@ -155,7 +165,7 @@ function renderCurrentView() {
   if (serverMatch) {
     if (!lastStatus) return;
     const id = serverMatch[1];
-    const server = lastStatus.find((s) => s.id === id);
+    const server = lastStatus.find((s) => s.serverId === id);
     if (server) {
       renderDetailPage(server);
     } else {
@@ -250,27 +260,28 @@ function renderLandingPage() {
 
 function buildServerCard(s) {
   const gameStatus = s.dockerStatus !== "running" ? "offline"
-    : s.gameStatus === "online" ? "online"
-    : s.gameStatus === "crashed" ? "crashed"
+    : s.gameStatus === "online"   ? "online"
+    : s.gameStatus === "crashed"  ? "crashed"
+    : s.gameStatus === "starting" ? "starting"
     : "offline";
 
   const statusLabel = {
-    online: "Online",
-    crashed: "Crashed",
-    offline: s.dockerStatus === "starting" ? "Starting" : "Offline",
+    online:   "Online",
+    crashed:  "Crashed",
     starting: "Starting",
-  }[s.dockerStatus === "starting" ? "starting" : gameStatus];
+    offline:  s.dockerStatus === "starting" ? "Starting" : "Offline",
+  }[gameStatus] ?? "Offline";
 
   const card = el("div", {
     class: "server-card",
-    "data-status": s.dockerStatus === "starting" ? "starting" : gameStatus,
-    "data-id": s.id,
+    "data-status": gameStatus,
+    "data-id": s.serverId,
   });
 
   // Navigate to detail on card click (but not button clicks)
   card.addEventListener("click", (e) => {
     if (e.target.closest(".btn")) return;
-    location.hash = `#server/${encodeURIComponent(s.id)}`;
+    location.hash = `#server/${encodeURIComponent(s.serverId)}`;
   });
 
   // Header
@@ -336,17 +347,33 @@ function buildServerCard(s) {
     body.appendChild(pa);
   }
 
+  // Crash guard notice
+  if (s.crashGuard) {
+    const cg = el("div", { class: `crash-guard-notice${s.crashGuard.blocked ? " crash-guard-blocked" : ""}` });
+    if (s.crashGuard.blocked) {
+      cg.textContent = "⚠ Auto-restart disabled — crash loop detected";
+    } else if (s.crashGuard.restartPendingMs !== null) {
+      cg.textContent = `↺ Auto-restart in ~${Math.ceil(s.crashGuard.restartPendingMs / 1000)}s (attempt ${s.crashGuard.attempts + 1}/3)`;
+    } else if (s.crashGuard.attempts > 0) {
+      cg.textContent = `↺ Auto-restarted ${s.crashGuard.attempts}×`;
+    }
+    if (cg.textContent) body.appendChild(cg);
+  }
+
   card.appendChild(body);
 
   // Footer actions
   const footer = el("div", { class: "server-card-footer" });
-  if (gameStatus === "online" || gameStatus === "crashed") {
+  const isAdmin = currentUser?.role === "admin";
+  if (gameStatus === "online" || gameStatus === "crashed" || gameStatus === "starting") {
     const restartBtn = el("button", { class: "btn btn-small" }, "↺ Restart");
     restartBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "restart", s.name, restartBtn); };
     footer.appendChild(restartBtn);
-    const stopBtn = el("button", { class: "btn btn-small btn-danger" }, "■ Stop");
-    stopBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "stop", s.name, stopBtn); };
-    footer.appendChild(stopBtn);
+    if (isAdmin) {
+      const stopBtn = el("button", { class: "btn btn-small btn-danger" }, "■ Stop");
+      stopBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "stop", s.name, stopBtn); };
+      footer.appendChild(stopBtn);
+    }
   } else if (gameStatus === "offline" && s.allowStart) {
     const startBtn = el("button", { class: "btn btn-small" }, "▶ Start");
     startBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "start", s.name, startBtn); };
@@ -364,14 +391,16 @@ function renderDetailPage(s) {
   root.innerHTML = "";
 
   const gameStatus = s.dockerStatus !== "running" ? "offline"
-    : s.gameStatus === "online" ? "online"
-    : s.gameStatus === "crashed" ? "crashed"
+    : s.gameStatus === "online"   ? "online"
+    : s.gameStatus === "crashed"  ? "crashed"
+    : s.gameStatus === "starting" ? "starting"
     : "offline";
 
   const statusLabel = {
-    online: "Online",
-    crashed: "Crashed",
-    offline: s.dockerStatus === "starting" ? "Starting" : "Offline",
+    online:   "Online",
+    crashed:  "Crashed",
+    starting: "Starting",
+    offline:  s.dockerStatus === "starting" ? "Starting" : "Offline",
   }[gameStatus] ?? "Offline";
 
   // Detail header
@@ -442,16 +471,17 @@ function renderDetailPage(s) {
     root.appendChild(playersPanel);
   }
 
-  // Admin: timed action panel
-  if (currentUser?.role === "admin" || currentUser?.role === "whitelisted") {
+  // Admin: full timed action panel (restart + shutdown with configurable delay)
+  if (currentUser?.role === "admin") {
     buildTimedActionPanel(root, s);
+  } else if (currentUser?.role === "whitelisted") {
+    // Whitelisted: restart-only button (server enforces 5-min delay + broadcast)
+    buildWhitelistedRestartPanel(root, s, gameStatus);
   }
 
-  // Admin: broadcast panel
-  if (currentUser?.role === "admin" || currentUser?.role === "whitelisted") {
-    if (gameStatus === "online") {
-      buildBroadcastPanel(root, s);
-    }
+  // Admin only: broadcast panel
+  if (currentUser?.role === "admin" && gameStatus === "online") {
+    buildBroadcastPanel(root, s);
   }
 
   // Map section
@@ -531,6 +561,31 @@ async function cancelTimedAction(id) {
   await poll();
 }
 
+// ── Whitelisted restart panel (simple restart, server enforces 5-min delay) ──
+
+function buildWhitelistedRestartPanel(root, s, gameStatus) {
+  if (gameStatus !== "online" && gameStatus !== "crashed" && gameStatus !== "starting") return;
+  const panel = el("div", { class: "timed-action-panel" });
+
+  if (s.pendingTimedAction) {
+    const secs = s.pendingTimedAction.remainingSeconds;
+    const mins = Math.floor(secs / 60);
+    const ss = secs % 60;
+    panel.appendChild(el("span", { class: "pending-action-label" },
+      `Restart pending: ${mins}:${String(ss).padStart(2, "0")}`
+    ));
+  } else {
+    const restartBtn = el("button", { class: "btn btn-small" }, "↺ Restart");
+    restartBtn.onclick = () => doContainerAction(s.id, "restart", s.name, restartBtn);
+    panel.appendChild(restartBtn);
+    panel.appendChild(el("span", { style: "color:var(--text-secondary);font-size:13px;margin-left:8px" },
+      "A 5-minute countdown will be broadcast in-game."
+    ));
+  }
+
+  root.appendChild(panel);
+}
+
 // ── Broadcast panel ───────────────────────────────────────────────────────────
 
 function buildBroadcastPanel(root, s) {
@@ -580,6 +635,168 @@ function buildBroadcastPanel(root, s) {
 
 // ── Detail map ────────────────────────────────────────────────────────────────
 
+function applyMapTransform() {
+  if (!detailMapInner) return;
+  detailMapInner.style.transform = `translate(${mapPanX}px, ${mapPanY}px) scale(${mapZoom})`;
+}
+
+function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
+  panelEl.innerHTML = "";
+  if (!calibState) return;
+
+  const CALIB_COLORS = ["#ff4444", "#ff8800"];
+  const step = calibState.points.length + 1; // 1 or 2
+
+  const title = el("div", { class: "calib-panel-title" },
+    `Step ${step} of 2 — ${step === 1 ? "First" : "Second"} reference point`);
+  panelEl.appendChild(title);
+
+  const hint = el("p", { class: "calib-hint" },
+    "Click the map where you know a player's position, then enter their world coordinates below. " +
+    "Use two distant points for best accuracy.");
+  panelEl.appendChild(hint);
+
+  // Confirmed points summary
+  calibState.points.forEach((pt, i) => {
+    const row = el("div", { class: "calib-confirmed-point" });
+    row.style.borderLeftColor = CALIB_COLORS[i];
+    row.textContent = `P${i + 1}: world (${Math.round(pt.worldX)}, ${Math.round(pt.worldY)})  ·  map (${(pt.fracX * 100).toFixed(1)}%, ${(pt.fracY * 100).toFixed(1)}%)`;
+    panelEl.appendChild(row);
+  });
+
+  // Click status
+  const clickStatus = el("div", { class: "calib-click-status" });
+  clickStatus.textContent = calibState.pendingFracX !== null
+    ? `Map clicked at (${(calibState.pendingFracX * 100).toFixed(1)}%, ${(calibState.pendingFracY * 100).toFixed(1)}%) — now enter world coordinates`
+    : "Click on the map to set the reference point";
+  panelEl.appendChild(clickStatus);
+
+  // Live players for reference
+  if (s.players.length > 0) {
+    const refTitle = el("div", { class: "calib-ref-title" }, "Live player coordinates (for reference):");
+    panelEl.appendChild(refTitle);
+    const refList = el("div", { class: "calib-ref-list" });
+    for (const p of s.players) {
+      if (!p.locationX && !p.locationY) continue;
+      const row = el("div", { class: "calib-ref-row" });
+      const nameEl = el("span", { class: "calib-ref-name" }, p.name || p.steamId);
+      const coordsEl = el("span", { class: "calib-ref-coords" },
+        `X: ${Math.round(p.locationX)}  Y: ${Math.round(p.locationY)}`);
+      const useBtn = el("button", { class: "btn btn-small btn-secondary" }, "Use");
+      useBtn.onclick = () => {
+        wxInput.value = Math.round(p.locationX);
+        wyInput.value = Math.round(p.locationY);
+      };
+      row.appendChild(nameEl); row.appendChild(coordsEl); row.appendChild(useBtn);
+      refList.appendChild(row);
+    }
+    panelEl.appendChild(refList);
+  }
+
+  // World coordinate inputs
+  const inputRow = el("div", { class: "calib-input-row" });
+  const wxLabel = el("label", { class: "calib-label" }, `World X:`);
+  const wxInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -245000" });
+  const wyLabel = el("label", { class: "calib-label" }, `World Y:`);
+  const wyInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. 178000" });
+  inputRow.appendChild(wxLabel); inputRow.appendChild(wxInput);
+  inputRow.appendChild(wyLabel); inputRow.appendChild(wyInput);
+  panelEl.appendChild(inputRow);
+
+  // Action buttons
+  const btnRow = el("div", { class: "calib-btn-row" });
+
+  const setBtn = el("button", { class: "btn btn-primary btn-small" },
+    step === 1 ? "Set Point 1 →" : "Set Point 2 →");
+  setBtn.onclick = () => {
+    const worldX = parseFloat(wxInput.value);
+    const worldY = parseFloat(wyInput.value);
+    if (isNaN(worldX) || isNaN(worldY)) { alert("Enter valid world coordinates."); return; }
+    if (calibState.pendingFracX === null) { alert("Click a location on the map first."); return; }
+    calibState.points.push({
+      worldX, worldY,
+      fracX: calibState.pendingFracX,
+      fracY: calibState.pendingFracY,
+    });
+    calibState.pendingFracX = null;
+    calibState.pendingFracY = null;
+    renderDetailCanvas(s);
+    if (calibState.points.length >= 2) {
+      renderCalibSavePanel(panelEl, s, calibBtn, mapContainer);
+    } else {
+      renderCalibPanel(panelEl, s, calibBtn, mapContainer);
+    }
+  };
+  btnRow.appendChild(setBtn);
+  panelEl.appendChild(btnRow);
+}
+
+function renderCalibSavePanel(panelEl, s, calibBtn, mapContainer) {
+  panelEl.innerHTML = "";
+
+  const title = el("div", { class: "calib-panel-title" }, "Review & Save Calibration");
+  panelEl.appendChild(title);
+
+  const [p1, p2] = calibState.points;
+  const CALIB_COLORS = ["#ff4444", "#ff8800"];
+  [p1, p2].forEach((pt, i) => {
+    const row = el("div", { class: "calib-confirmed-point" });
+    row.style.borderLeftColor = CALIB_COLORS[i];
+    row.textContent = `P${i + 1}: world (${Math.round(pt.worldX)}, ${Math.round(pt.worldY)})  ·  map (${(pt.fracX * 100).toFixed(1)}%, ${(pt.fracY * 100).toFixed(1)}%)`;
+    panelEl.appendChild(row);
+  });
+
+  const btnRow = el("div", { class: "calib-btn-row" });
+
+  const saveBtn = el("button", { class: "btn btn-primary btn-small" }, "Save Calibration");
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    try {
+      const res = await fetch("/api/map-calibration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ points: calibState.points }),
+      });
+      if (!res.ok) { alert("Save failed: " + (await res.json()).error); saveBtn.disabled = false; saveBtn.textContent = "Save Calibration"; return; }
+      const newCal = await res.json();
+      mapCalibration = newCal;
+      calibState = null;
+      mapContainer.style.cursor = "";
+      panelEl.style.display = "none";
+      calibBtn.textContent = "Recalibrate";
+      renderDetailCanvas(s);
+    } catch (e) {
+      alert("Save failed: " + e.message);
+      saveBtn.disabled = false; saveBtn.textContent = "Save Calibration";
+    }
+  };
+
+  const resetBtn2 = el("button", { class: "btn btn-secondary btn-small" }, "Start Over");
+  resetBtn2.onclick = () => {
+    calibState.points = [];
+    calibState.pendingFracX = null;
+    calibState.pendingFracY = null;
+    renderDetailCanvas(s);
+    renderCalibPanel(panelEl, s, calibBtn, mapContainer);
+  };
+
+  const deleteBtn = el("button", { class: "btn btn-secondary btn-small" }, "Reset to Default");
+  deleteBtn.onclick = async () => {
+    if (!confirm("Reset map calibration to defaults?")) return;
+    await fetch("/api/map-calibration", { method: "DELETE" });
+    mapCalibration = await (await fetch("/api/map-calibration")).json();
+    calibState = null;
+    mapContainer.style.cursor = "";
+    panelEl.style.display = "none";
+    calibBtn.textContent = mapCalibration?.calibrated ? "Recalibrate" : "Calibrate Map";
+    renderDetailCanvas(s);
+  };
+
+  btnRow.appendChild(saveBtn); btnRow.appendChild(resetBtn2); btnRow.appendChild(deleteBtn);
+  panelEl.appendChild(btnRow);
+}
+
 function buildDetailMap(root, s) {
   const section = el("div", {});
 
@@ -605,13 +822,50 @@ function buildDetailMap(root, s) {
   sectionHeader.appendChild(histBtn);
   section.appendChild(sectionHeader);
 
-  // Map container
+  // Reset view button
+  const resetBtn = el("button", { class: "btn btn-small btn-secondary" }, "Reset View");
+  resetBtn.onclick = () => { mapZoom = 1; mapPanX = 0; mapPanY = 0; applyMapTransform(); };
+  sectionHeader.appendChild(resetBtn);
+
+  // Calibrate button (admin only)
+  let calibPanelEl = null;
+  if (currentUser?.role === "admin") {
+    const calibBtn = el("button", { class: "btn btn-small btn-secondary" },
+      mapCalibration?.calibrated ? "Recalibrate" : "Calibrate Map");
+    calibBtn.onclick = () => {
+      if (calibState) {
+        calibState = null;
+        mapContainer.style.cursor = "";
+        calibPanelEl.style.display = "none";
+        calibBtn.textContent = mapCalibration?.calibrated ? "Recalibrate" : "Calibrate Map";
+        renderDetailCanvas(s);
+      } else {
+        calibState = { step: 1, points: [], pendingFracX: null, pendingFracY: null, refreshPanel: () => {} };
+        mapContainer.style.cursor = "crosshair";
+        calibBtn.textContent = "Cancel Calibration";
+        calibPanelEl.style.display = "";
+        renderCalibPanel(calibPanelEl, s, calibBtn, mapContainer);
+        calibState.refreshPanel = () => renderCalibPanel(calibPanelEl, s, calibBtn, mapContainer);
+      }
+    };
+    sectionHeader.appendChild(calibBtn);
+  }
+
+  // Map container (viewport — clips the inner div)
   const mapContainer = el("div", { class: "map-container" });
-  const mapImg = el("img", { class: "map-img", src: "/palworld-map.jpg", alt: "Palworld World Map" });
+  const inner = el("div", { class: "map-inner" });
+  const mapImg = el("img", { class: "map-img", src: "/palworld-map.webp", alt: "Palworld World Map" });
   const canvas = el("canvas", { class: "map-canvas" });
-  mapContainer.appendChild(mapImg);
-  mapContainer.appendChild(canvas);
+  inner.appendChild(mapImg);
+  inner.appendChild(canvas);
+  mapContainer.appendChild(inner);
   section.appendChild(mapContainer);
+
+  // Calibration panel (admin only, initially hidden)
+  if (currentUser?.role === "admin") {
+    calibPanelEl = el("div", { class: "calib-panel", style: "display:none" });
+    section.appendChild(calibPanelEl);
+  }
 
   // History legend placeholder
   const legendEl = el("div", { class: "history-legend", style: "display:none" });
@@ -622,6 +876,62 @@ function buildDetailMap(root, s) {
   // Store refs for re-renders
   detailMapImg = mapImg;
   detailCanvas = canvas;
+  detailMapInner = inner;
+
+  // ── Zoom on scroll wheel ──────────────────────────────────────────────────
+  mapContainer.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = mapContainer.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newZoom = Math.min(Math.max(mapZoom * factor, 0.25), 12);
+    const ix = (cx - mapPanX) / mapZoom;
+    const iy = (cy - mapPanY) / mapZoom;
+    mapPanX = cx - ix * newZoom;
+    mapPanY = cy - iy * newZoom;
+    mapZoom = newZoom;
+    applyMapTransform();
+  }, { passive: false });
+
+  // ── Pan on drag / calibration click ──────────────────────────────────────
+  let drag = null;
+  mapContainer.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag = { startX: e.clientX - mapPanX, startY: e.clientY - mapPanY,
+             initX: e.clientX, initY: e.clientY };
+    if (!calibState) mapContainer.style.cursor = "grabbing";
+  });
+  const onMouseMove = (e) => {
+    if (!drag) return;
+    mapPanX = e.clientX - drag.startX;
+    mapPanY = e.clientY - drag.startY;
+    applyMapTransform();
+  };
+  const onMouseUp = (e) => {
+    if (!drag) return;
+    if (calibState) {
+      const dx = e.clientX - drag.initX, dy = e.clientY - drag.initY;
+      if (dx * dx + dy * dy < 25) { // < 5px — treat as calibration click
+        const rect = mapContainer.getBoundingClientRect();
+        const cx = (e.clientX - rect.left - mapPanX) / mapZoom;
+        const cy = (e.clientY - rect.top  - mapPanY) / mapZoom;
+        calibState.pendingFracX = cx / detailMapImg.offsetWidth;
+        calibState.pendingFracY = cy / detailMapImg.offsetHeight;
+        renderDetailCanvas(s);
+        calibState.refreshPanel();
+      }
+    }
+    drag = null;
+    mapContainer.style.cursor = calibState ? "crosshair" : "";
+  };
+  window.addEventListener("mousemove", onMouseMove);
+  window.addEventListener("mouseup", onMouseUp);
+  mapEventCleanup = () => {
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+  };
 
   mapImg.onload = () => renderDetailCanvas(s);
   window.addEventListener("resize", () => renderDetailCanvas(s), { once: false });
@@ -634,18 +944,17 @@ function renderDetailCanvas(s) {
   if (!detailCanvas || !detailMapImg) return;
   const ctx = detailCanvas.getContext("2d");
 
-  const rect = detailMapImg.getBoundingClientRect();
-  detailCanvas.width = rect.width || detailMapImg.offsetWidth;
-  detailCanvas.height = rect.height || detailMapImg.offsetHeight;
+  detailCanvas.width = detailMapImg.offsetWidth;
+  detailCanvas.height = detailMapImg.offsetHeight;
   ctx.clearRect(0, 0, detailCanvas.width, detailCanvas.height);
 
   if (!mapCalibration) return;
-  const { worldMinX, worldMaxX, worldMinY, worldMaxY } = mapCalibration;
+  const { scaleX, offsetX, scaleY, offsetY } = mapCalibration;
 
   function worldToCanvas(wx, wy) {
     return {
-      cx: ((wx - worldMinX) / (worldMaxX - worldMinX)) * detailCanvas.width,
-      cy: ((wy - worldMinY) / (worldMaxY - worldMinY)) * detailCanvas.height,
+      cx: (wx * scaleX + offsetX) * detailCanvas.width,
+      cy: (wy * scaleY + offsetY) * detailCanvas.height,
     };
   }
 
@@ -693,6 +1002,54 @@ function renderDetailCanvas(s) {
     ctx.shadowBlur = 4;
     ctx.fillText(p.name, cx + 8, cy + 4);
     ctx.shadowBlur = 0;
+  }
+
+  // Draw calibration markers
+  if (calibState) {
+    const CALIB_COLORS = ["#ff4444", "#ff8800"];
+
+    // Confirmed points
+    calibState.points.forEach((pt, i) => {
+      const px = pt.fracX * detailCanvas.width;
+      const py = pt.fracY * detailCanvas.height;
+      const col = CALIB_COLORS[i];
+      ctx.beginPath();
+      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.fillStyle = col + "33";
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px - 14, py); ctx.lineTo(px + 14, py);
+      ctx.moveTo(px, py - 14); ctx.lineTo(px, py + 14);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.font = "bold 11px 'Noto Sans', sans-serif";
+      ctx.fillStyle = col;
+      ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 4;
+      ctx.fillText(`P${i + 1}`, px + 11, py - 9);
+      ctx.shadowBlur = 0;
+    });
+
+    // Pending click marker (dashed, before world coords confirmed)
+    if (calibState.pendingFracX !== null) {
+      const i = calibState.points.length;
+      const px = calibState.pendingFracX * detailCanvas.width;
+      const py = calibState.pendingFracY * detailCanvas.height;
+      const col = CALIB_COLORS[i] ?? "#ffffff";
+      ctx.beginPath();
+      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(px - 14, py); ctx.lineTo(px + 14, py);
+      ctx.moveTo(px, py - 14); ctx.lineTo(px, py + 14);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
 }
 

@@ -338,6 +338,22 @@ a:hover { color: var(--accent-hover); }
   letter-spacing: 0.5px;
 }
 
+.crash-guard-notice {
+  padding: 6px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  color: var(--status-starting);
+  background: #f0c04012;
+  border: 1px solid #f0c04040;
+}
+
+.crash-guard-blocked {
+  color: var(--status-crashed);
+  background: #e0525212;
+  border-color: #e0525240;
+}
+
 .player-list {
   display: flex;
   flex-direction: column;
@@ -511,17 +527,27 @@ a:hover { color: var(--accent-hover); }
 .map-container {
   position: relative;
   width: 100%;
-  aspect-ratio: 1;
-  max-height: 600px;
+  height: 560px;
   overflow: hidden;
   background: #060e17;
   border: 1px solid var(--border-subtle);
+  cursor: grab;
+  user-select: none;
+}
+
+.map-container:active {
+  cursor: grabbing;
+}
+
+.map-inner {
+  position: relative;
+  transform-origin: 0 0;
+  will-change: transform;
+  line-height: 0;
 }
 
 .map-img {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
   display: block;
 }
 
@@ -542,6 +568,118 @@ a:hover { color: var(--accent-hover); }
 }
 
 /* ── History legend ────────────────────────────────────────────────────────── */
+
+/* ── Map calibration panel ─────────────────────────────────────────────────── */
+
+.calib-panel {
+  background: var(--bg-panel-alt);
+  border: 1px solid #ff440044;
+  border-top: 2px solid #ff4444;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.calib-panel-title {
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ff8800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.calib-hint {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.calib-confirmed-point {
+  border-left: 3px solid #ff4444;
+  padding: 4px 10px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  background: #ffffff08;
+}
+
+.calib-click-status {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.calib-ref-title {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.calib-ref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calib-ref-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  background: #ffffff06;
+  border-radius: 4px;
+}
+
+.calib-ref-name {
+  min-width: 120px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.calib-ref-coords {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.calib-input-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.calib-label {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.calib-input {
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  padding: 5px 10px;
+  width: 150px;
+}
+
+.calib-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.calib-btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 .history-legend {
   display: flex;
