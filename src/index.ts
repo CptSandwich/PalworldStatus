@@ -722,6 +722,10 @@ app.delete("/api/map-calibration", requireAdmin, (c) => {
 
 // ── Static files ──────────────────────────────────────────────────────────────
 
+// Icons live in the project root, not public/
+app.get("/favicon.ico", serveStatic({ path: "./PalworldStatus.ico" }));
+app.get("/favicon.png", serveStatic({ path: "./PalworldStatusIcon.png" }));
+
 app.use("/*", serveStatic({ root: "./public" }));
 
 // Fallback: serve index.html for any unmatched route (SPA)
