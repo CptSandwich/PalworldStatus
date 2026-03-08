@@ -42,10 +42,16 @@ function initSchema() {
     )
   `);
 
-  // Migrate existing known_players table: add character_name if missing
-  try {
-    db.run("ALTER TABLE known_players ADD COLUMN character_name TEXT");
-  } catch { /* column already exists */ }
+  // Migrate existing known_players table: add columns if missing
+  const migrations = [
+    "ALTER TABLE known_players ADD COLUMN character_name TEXT",
+    "ALTER TABLE known_players ADD COLUMN last_container_id TEXT",
+    "ALTER TABLE known_players ADD COLUMN level INTEGER",
+    "ALTER TABLE known_players ADD COLUMN build_object_count INTEGER",
+  ];
+  for (const sql of migrations) {
+    try { db.run(sql); } catch { /* column already exists */ }
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS restart_schedules (
@@ -162,30 +168,42 @@ export interface KnownPlayer {
   first_seen: string;
   last_seen: string;
   last_server: string | null;
+  last_container_id: string | null;
+  level: number | null;
+  build_object_count: number | null;
   status: "whitelisted" | "blacklisted";
 }
 
 export function upsertPlayer(
   steamId: string,
-  displayName: string,
+  characterName: string,
   serverName: string,
-  characterName?: string
+  containerId: string,
+  level: number,
+  buildObjectCount: number
 ) {
   getDb().run(
-    `INSERT INTO known_players (steam_id, display_name, character_name, last_seen, last_server)
-     VALUES (?, ?, ?, datetime('now'), ?)
+    `INSERT INTO known_players
+       (steam_id, display_name, character_name, last_seen, last_server, last_container_id, level, build_object_count)
+     VALUES (?, '', ?, datetime('now'), ?, ?, ?, ?)
      ON CONFLICT(steam_id) DO UPDATE SET
-       display_name   = excluded.display_name,
-       character_name = COALESCE(excluded.character_name, character_name),
-       last_seen      = excluded.last_seen,
-       last_server    = excluded.last_server`,
-    [steamId, displayName, characterName ?? null, serverName]
+       character_name      = excluded.character_name,
+       last_seen           = excluded.last_seen,
+       last_server         = excluded.last_server,
+       last_container_id   = excluded.last_container_id,
+       level               = excluded.level,
+       build_object_count  = excluded.build_object_count`,
+    [steamId, characterName, serverName, containerId, level, buildObjectCount]
   );
 }
 
-/** Insert a player record only if one doesn't already exist. Used for log-scan
- *  pre-population so we never overwrite a real name with a placeholder. */
-/** Upsert a player from Steam auth — updates display_name and last_seen only,
+export function getKnownPlayersByContainer(containerId: string): KnownPlayer[] {
+  return getDb()
+    .query(`SELECT * FROM known_players WHERE last_container_id = ? ORDER BY last_seen DESC`)
+    .all(containerId) as KnownPlayer[];
+}
+
+/** Upsert a player from Steam auth — updates display_name (Steam name) and last_seen only,
  *  preserving last_server and character_name if already set. */
 export function upsertPlayerAuth(steamId: string, displayName: string) {
   getDb().run(

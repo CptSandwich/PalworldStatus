@@ -16,12 +16,13 @@ import {
   stopContainer,
   restartContainer,
 } from "./docker.js";
-import { getServerInfo, getPlayers, broadcast, gracefulStop } from "./palworld.js";
+import { getServerInfo, getPlayers, getMetrics, broadcast, gracefulStop, kickPlayer, banPlayer, unbanPlayer } from "./palworld.js";
 import {
   logAudit,
   getRecentAuditLog,
   upsertPlayer,
   getAllPlayers,
+  getKnownPlayersByContainer,
   setPlayerStatus,
   deletePlayer,
   getAllSchedules,
@@ -141,9 +142,10 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         console.warn(`[status] ${container.name} (${container.id.slice(0, 12)}) → could not resolve container IP`);
       }
 
-      const [info, players] = await Promise.all([
+      const [info, players, metrics] = await Promise.all([
         ip ? getServerInfo(ip, container.restPort, container.restPassword) : null,
         ip ? getPlayers(ip, container.restPort, container.restPassword) : null,
+        ip ? getMetrics(ip, container.restPort, container.restPassword) : null,
       ]);
 
       let gameStatus: "online" | "starting" | "crashed";
@@ -174,8 +176,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
       if (players) {
         for (const p of players) {
           if (p.userId) {
-            // Store character name in both display_name and character_name fields
-            upsertPlayer(p.userId, p.name, displayName, p.name);
+            upsertPlayer(p.userId, p.name, displayName, container.id, p.level ?? 0, p.build_object_count ?? 0);
 
             // Track location history with anti-aliasing
             if (p.location_x !== undefined && p.location_y !== undefined) {
@@ -217,7 +218,16 @@ app.get("/api/status", requireWhitelisted, async (c) => {
           level: p.level,
           locationX: p.location_x,
           locationY: p.location_y,
+          buildObjectCount: p.build_object_count,
+          ping: p.ping,
         })),
+        metrics: metrics ? {
+          fps: metrics.serverfps,
+          frameTime: metrics.serverframetime,
+          uptime: metrics.uptime,
+          baseCamps: metrics.num_base_camps,
+          days: metrics.days,
+        } : null,
         maxPlayers: info?.maxplayers ?? null,
         connectionAddress: `${PUBLIC_HOST}:${container.gamePort ?? 8211}`,
         gamePort: container.gamePort,
@@ -659,6 +669,92 @@ app.delete("/api/known-players/:steamId", requireAdmin, async (c) => {
   });
 
   return c.json({ ok: true });
+});
+
+// ── Per-container known players ───────────────────────────────────────────────
+
+app.get("/api/containers/:id/known-players", requireWhitelisted, (c) => {
+  const containerId = c.req.param("id");
+  return c.json({ players: getKnownPlayersByContainer(containerId) });
+});
+
+// ── In-game player actions (kick / ban / unban) ────────────────────────────────
+
+app.post("/api/containers/:id/players/:steamId/kick", requireAdmin, async (c) => {
+  const user = getCurrentUser(c)!;
+  const containerId = c.req.param("id");
+  const steamId = c.req.param("steamId");
+
+  const containers = await discoverPalworldContainers();
+  const container = containers.find((x) => x.id === containerId);
+  if (!container) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json<{ message?: string }>().catch(() => ({}));
+  const ip = await getContainerIP(containerId);
+  if (!ip) return c.json({ error: "Container not reachable" }, 503);
+
+  const ok = await kickPlayer(ip, container.restPort, container.restPassword, steamId, body.message);
+
+  logAudit("KICK", {
+    steamId: user.steamId,
+    displayName: user.displayName,
+    containerName: apiNameCache.get(containerId) ?? container.name,
+    details: `target=${steamId}`,
+  });
+
+  return c.json({ ok });
+});
+
+app.post("/api/containers/:id/players/:steamId/ban", requireAdmin, async (c) => {
+  const user = getCurrentUser(c)!;
+  const containerId = c.req.param("id");
+  const steamId = c.req.param("steamId");
+
+  const containers = await discoverPalworldContainers();
+  const container = containers.find((x) => x.id === containerId);
+  if (!container) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json<{ message?: string }>().catch(() => ({}));
+  const ip = await getContainerIP(containerId);
+  if (!ip) return c.json({ error: "Container not reachable" }, 503);
+
+  const ok = await banPlayer(ip, container.restPort, container.restPassword, steamId, body.message);
+
+  // Also set blacklisted in DB
+  setPlayerStatus(steamId, "blacklisted");
+
+  logAudit("BAN", {
+    steamId: user.steamId,
+    displayName: user.displayName,
+    containerName: apiNameCache.get(containerId) ?? container.name,
+    details: `target=${steamId}`,
+  });
+
+  return c.json({ ok });
+});
+
+app.delete("/api/containers/:id/players/:steamId/ban", requireAdmin, async (c) => {
+  const user = getCurrentUser(c)!;
+  const containerId = c.req.param("id");
+  const steamId = c.req.param("steamId");
+
+  const containers = await discoverPalworldContainers();
+  const container = containers.find((x) => x.id === containerId);
+  if (!container) return c.json({ error: "Not found" }, 404);
+
+  const ip = await getContainerIP(containerId);
+  if (!ip) return c.json({ error: "Container not reachable" }, 503);
+
+  const ok = await unbanPlayer(ip, container.restPort, container.restPassword, steamId);
+
+  logAudit("UNBAN", {
+    steamId: user.steamId,
+    displayName: user.displayName,
+    containerName: apiNameCache.get(containerId) ?? container.name,
+    details: `target=${steamId}`,
+  });
+
+  return c.json({ ok });
 });
 
 // ── Restart schedules (admin only) ────────────────────────────────────────────

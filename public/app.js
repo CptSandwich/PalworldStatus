@@ -16,6 +16,8 @@ let detailContainerId = null;
 let detailHistoryEnabled = false;
 let detailHiddenPlayers = new Set(); // steamIds hidden in history view
 let detailHistoryData = null;        // cached history response
+let detailKnownPlayers = null;       // known_players for current container
+let detailExpandedPlayers = new Set(); // steamIds with expanded rows
 let detailMapImg = null;             // <img> element for detail map
 let detailCanvas = null;             // <canvas> for detail map
 let detailMapInner = null;           // <div> that gets CSS zoom/pan transform
@@ -149,6 +151,8 @@ function onHashChange() {
     detailHistoryEnabled = false;
     detailHiddenPlayers = new Set();
     detailHistoryData = null;
+    detailKnownPlayers = null;
+    detailExpandedPlayers = new Set();
     detailMapImg = null;
     detailCanvas = null;
     detailMapInner = null;
@@ -266,7 +270,7 @@ function renderLandingPage() {
     const pmTable = el("table", { class: "data-table", id: "players-table" });
     const pmHead = el("thead", {});
     const pmHeadRow = el("tr", {});
-    for (const h of ["Name", "First Seen", "Last Seen", "Last Server", "Access"]) {
+    for (const h of ["Character", "Steam Name", "First Seen", "Last Seen", "Last Server", "Access"]) {
       pmHeadRow.appendChild(el("th", {}, h));
     }
     pmHead.appendChild(pmHeadRow);
@@ -419,7 +423,7 @@ function buildServerCard(s) {
 
 // ── Detail page ───────────────────────────────────────────────────────────────
 
-function renderDetailPage(s) {
+async function renderDetailPage(s) {
   const gameStatus = s.dockerStatus !== "running" ? "offline"
     : s.gameStatus === "online"   ? "online"
     : s.gameStatus === "crashed"  ? "crashed"
@@ -439,6 +443,11 @@ function renderDetailPage(s) {
     if (dot) dot.style.cssText = `background:var(--status-${gameStatus});box-shadow:0 0 7px var(--status-${gameStatus})`;
     const lbl = document.getElementById("dp-status-label");
     if (lbl) { lbl.textContent = statusLabel; lbl.style.color = `var(--status-${gameStatus})`; }
+    // Refresh known players in background
+    try {
+      const r = await fetch(`/api/containers/${encodeURIComponent(s.id)}/known-players`);
+      if (r.ok) detailKnownPlayers = (await r.json()).players;
+    } catch { /* keep stale data */ }
     const dyn = document.getElementById("dp-dynamic");
     dyn.innerHTML = "";
     _buildDetailDynamic(dyn, s, gameStatus);
@@ -475,6 +484,12 @@ function renderDetailPage(s) {
   // Dynamic section (rebuilt on every poll)
   const dyn = el("div", { id: "dp-dynamic" });
   root.appendChild(dyn);
+
+  // Fetch known players for this container, then render
+  try {
+    const r = await fetch(`/api/containers/${encodeURIComponent(s.id)}/known-players`);
+    if (r.ok) detailKnownPlayers = (await r.json()).players;
+  } catch { /* ignore */ }
   _buildDetailDynamic(dyn, s, gameStatus);
 
   // Static sections (built once, never rebuilt by poll)
@@ -510,6 +525,28 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
   }
   infoPanel.appendChild(metaRow);
 
+  // Metrics strip
+  if (s.metrics) {
+    const m = s.metrics;
+    const metricsRow = el("div", { class: "metrics-strip" });
+    const addMetric = (label, value) => {
+      const cell = el("div", { class: "metric-cell" });
+      cell.appendChild(el("span", { class: "metric-value" }, value));
+      cell.appendChild(el("span", { class: "metric-label" }, label));
+      metricsRow.appendChild(cell);
+    };
+    addMetric("FPS", m.fps != null ? m.fps.toFixed(1) : "—");
+    addMetric("Frame time", m.frameTime != null ? `${m.frameTime.toFixed(1)}ms` : "—");
+    addMetric("Base camps", m.baseCamps != null ? String(m.baseCamps) : "—");
+    if (m.days != null) addMetric("Days", String(m.days));
+    if (m.uptime != null) {
+      const h = Math.floor(m.uptime / 3600);
+      const min = Math.floor((m.uptime % 3600) / 60);
+      addMetric("Uptime", h > 0 ? `${h}h ${min}m` : `${min}m`);
+    }
+    infoPanel.appendChild(metricsRow);
+  }
+
   // Idle countdown
   if (s.idleCountdownSeconds !== null) {
     const mins = Math.floor(s.idleCountdownSeconds / 60);
@@ -523,22 +560,132 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
   }
   dyn.appendChild(infoPanel);
 
-  // Player list
-  if (gameStatus === "online" && s.players.length > 0) {
-    const playersPanel = el("div", { class: "detail-panel" });
-    playersPanel.appendChild(el("div", { class: "detail-panel-title" }, "Players Online"));
-    const list = el("div", { class: "player-list" });
-    for (const p of s.players) {
-      const row = el("div", { class: "player-row" });
-      row.appendChild(el("span", { class: "player-name" }, p.name));
-      row.appendChild(el("span", { class: "player-level" }, `Lv.${p.level}`));
-      row.appendChild(el("span", { class: "player-coords" },
-        `X: ${p.locationX.toFixed(2)}  Y: ${p.locationY.toFixed(2)}`
-      ));
-      list.appendChild(row);
+  // Player list (merged: connected + historical)
+  {
+    const connectedIds = new Set(s.players.map(p => p.steamId));
+    const connectedMap = new Map(s.players.map(p => [p.steamId, p]));
+
+    // Build unified list: connected players first, then known-but-offline players for this server
+    const knownHere = detailKnownPlayers ?? [];
+    const offlinePlayers = knownHere.filter(kp => !connectedIds.has(kp.steam_id));
+    const hasAny = s.players.length > 0 || offlinePlayers.length > 0;
+
+    if (hasAny) {
+      const playersPanel = el("div", { class: "detail-panel" });
+      const titleRow = el("div", { style: "display:flex;justify-content:space-between;align-items:center" });
+      const titleText = gameStatus === "online"
+        ? `Players Online (${s.players.length}${s.maxPlayers ? `/${s.maxPlayers}` : ""})`
+        : "Player History";
+      titleRow.appendChild(el("div", { class: "detail-panel-title" }, titleText));
+      if (offlinePlayers.length > 0) {
+        titleRow.appendChild(el("span", { style: "font-size:12px;color:var(--text-secondary)" },
+          `+${offlinePlayers.length} seen previously`));
+      }
+      playersPanel.appendChild(titleRow);
+
+      const list = el("div", { class: "player-list" });
+
+      const buildPlayerRow = (name, steamId, isConnected, liveData, knownData) => {
+        const row = el("div", { class: `player-row ${isConnected ? "player-row--connected" : "player-row--offline"}` });
+        const isExpanded = detailExpandedPlayers.has(steamId);
+
+        // Header row (always visible)
+        const header = el("div", { class: "player-row-header" });
+
+        const statusDot = el("span", { class: "player-status-dot", style: `background:${isConnected ? "var(--status-online)" : "var(--text-muted)"}` });
+        header.appendChild(statusDot);
+
+        const nameEl = el("span", { class: "player-name" }, name || steamId);
+        header.appendChild(nameEl);
+
+        if (isConnected && liveData?.level) {
+          header.appendChild(el("span", { class: "player-level" }, `Lv.${liveData.level}`));
+        } else if (!isConnected && knownData?.level) {
+          header.appendChild(el("span", { class: "player-level" }, `Lv.${knownData.level}`));
+        }
+
+        if (!isConnected && knownData?.last_seen) {
+          const d = new Date(knownData.last_seen + "Z");
+          header.appendChild(el("span", { class: "player-last-seen" }, `Last seen ${d.toLocaleDateString()}`));
+        }
+
+        // Toggle expand button
+        const expandBtn = el("button", { class: "btn btn-small btn-secondary player-expand-btn" }, isExpanded ? "▲" : "▼");
+        expandBtn.onclick = () => {
+          if (detailExpandedPlayers.has(steamId)) detailExpandedPlayers.delete(steamId);
+          else detailExpandedPlayers.add(steamId);
+          // Re-render just this row
+          const newRow = buildPlayerRow(name, steamId, isConnected, liveData, knownData);
+          row.replaceWith(newRow);
+        };
+        header.appendChild(expandBtn);
+
+        // Admin actions
+        if (currentUser?.role === "admin") {
+          const actionsEl = el("div", { class: "player-actions" });
+          if (isConnected) {
+            const kickBtn = el("button", { class: "btn btn-small btn-secondary" }, "Kick");
+            kickBtn.onclick = () => doPlayerAction(s.id, steamId, "kick", name, kickBtn);
+            actionsEl.appendChild(kickBtn);
+          }
+          const banBtn = el("button", { class: "btn btn-small btn-danger" }, "Ban");
+          banBtn.onclick = () => doPlayerAction(s.id, steamId, "ban", name, banBtn);
+          actionsEl.appendChild(banBtn);
+          if (knownData?.status === "blacklisted") {
+            const unbanBtn = el("button", { class: "btn btn-small btn-secondary" }, "Unban");
+            unbanBtn.onclick = () => doPlayerAction(s.id, steamId, "unban", name, unbanBtn);
+            actionsEl.appendChild(unbanBtn);
+          }
+          header.appendChild(actionsEl);
+        }
+
+        row.appendChild(header);
+
+        // Expanded details
+        if (isExpanded) {
+          const details = el("div", { class: "player-row-details" });
+          const addDetail = (label, value) => {
+            const item = el("span", { class: "player-detail-item" });
+            item.appendChild(el("span", { class: "player-detail-label" }, label + ": "));
+            item.appendChild(el("span", {}, value));
+            details.appendChild(item);
+          };
+
+          if (isConnected && liveData) {
+            if (liveData.locationX !== undefined) addDetail("Coords", `${Math.round(liveData.locationX)}, ${Math.round(liveData.locationY)}`);
+            if (liveData.buildObjectCount !== undefined) addDetail("Buildings", String(liveData.buildObjectCount));
+            if (liveData.ping !== undefined) addDetail("Ping", `${liveData.ping}ms`);
+          }
+          if (steamId) addDetail("Steam ID", steamId);
+          if (knownData?.character_name && knownData.character_name !== name) addDetail("Character", knownData.character_name);
+          if (knownData?.display_name) addDetail("Steam name", knownData.display_name);
+          if (knownData?.first_seen) {
+            const d = new Date(knownData.first_seen + "Z");
+            addDetail("First seen", d.toLocaleDateString());
+          }
+
+          if (details.children.length > 0) row.appendChild(details);
+        }
+
+        return row;
+      };
+
+      // Connected players
+      for (const p of s.players) {
+        const known = knownHere.find(k => k.steam_id === p.steamId);
+        const displayName = p.name || known?.character_name || known?.display_name || p.steamId;
+        list.appendChild(buildPlayerRow(displayName, p.steamId, true, p, known ?? null));
+      }
+
+      // Offline known players (seen on this server before)
+      for (const kp of offlinePlayers) {
+        const displayName = kp.character_name || kp.display_name || kp.steam_id;
+        list.appendChild(buildPlayerRow(displayName, kp.steam_id, false, null, kp));
+      }
+
+      playersPanel.appendChild(list);
+      dyn.appendChild(playersPanel);
     }
-    playersPanel.appendChild(list);
-    dyn.appendChild(playersPanel);
   }
 
   // Action panels
@@ -620,6 +767,34 @@ async function doTimedAction(id, action, minutes, btn) {
 async function cancelTimedAction(id) {
   await fetch(`/api/containers/${encodeURIComponent(id)}/cancel-timed-action`, { method: "POST" });
   await poll();
+}
+
+// ── Player in-game actions ────────────────────────────────────────────────────
+
+async function doPlayerAction(containerId, steamId, action, playerName, btn) {
+  const labels = { kick: "Kick", ban: "Ban", unban: "Unban" };
+  if (!confirm(`${labels[action]} player "${playerName}"?`)) return;
+  btn.disabled = true;
+  try {
+    let res;
+    if (action === "kick") {
+      res = await fetch(`/api/containers/${encodeURIComponent(containerId)}/players/${encodeURIComponent(steamId)}/kick`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    } else if (action === "ban") {
+      res = await fetch(`/api/containers/${encodeURIComponent(containerId)}/players/${encodeURIComponent(steamId)}/ban`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+    } else {
+      res = await fetch(`/api/containers/${encodeURIComponent(containerId)}/players/${encodeURIComponent(steamId)}/ban`, { method: "DELETE" });
+    }
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      alert(`Error: ${d.error ?? res.statusText}`);
+    } else {
+      await poll();
+    }
+  } catch (err) {
+    alert(`Network error: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── Whitelisted restart panel (simple restart, server enforces 5-min delay) ──
@@ -1260,9 +1435,9 @@ async function fetchAndRenderPlayers() {
     if (!tbody) return;
     tbody.innerHTML = "";
     for (const p of data.players) {
-      const displayName = p.character_name || p.display_name || p.steam_id;
       const tr = el("tr", {});
-      tr.appendChild(el("td", {}, displayName));
+      tr.appendChild(el("td", {}, p.character_name || "—"));
+      tr.appendChild(el("td", {}, p.display_name || "—"));
       tr.appendChild(el("td", { class: "mono" }, formatTs(p.first_seen)));
       tr.appendChild(el("td", { class: "mono" }, formatTs(p.last_seen)));
       tr.appendChild(el("td", {}, p.last_server ?? "—"));

@@ -13,6 +13,16 @@ export interface ServerInfo {
   serverName: string;
 }
 
+export interface ServerMetrics {
+  serverfps: number;
+  serverframetime: number;
+  currentplayernum: number;
+  maxplayernum: number;
+  uptime: number;         // server uptime in seconds
+  num_base_camps: number;
+  days: number | null;    // in-game world days (not present in all versions)
+}
+
 export interface PlayerInfo {
   name: string;
   accountId: string;
@@ -23,6 +33,7 @@ export interface PlayerInfo {
   location_x: number;
   location_y: number;
   level: number;
+  build_object_count: number;
 }
 
 function basicAuth(password: string): string {
@@ -71,6 +82,14 @@ export async function getServerInfo(
   return { ...data, serverName: data.servername ?? "" };
 }
 
+export async function getMetrics(
+  ip: string,
+  port: number,
+  password: string
+): Promise<ServerMetrics | null> {
+  return palworldFetch<ServerMetrics>(ip, port, password, "/v1/api/metrics");
+}
+
 export async function getPlayers(
   ip: string,
   port: number,
@@ -107,6 +126,46 @@ export async function gracefulStop(
   const result = await palworldFetch(ip, port, password, "/v1/api/stop", {
     method: "POST",
     body: JSON.stringify({ waittime: 1, message }),
+  });
+  return result !== null;
+}
+
+export async function kickPlayer(
+  ip: string,
+  port: number,
+  password: string,
+  steamId: string,
+  message = "You have been kicked from the server."
+): Promise<boolean> {
+  const result = await palworldFetch(ip, port, password, `/v1/api/players/${steamId}/kick`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+  return result !== null;
+}
+
+export async function banPlayer(
+  ip: string,
+  port: number,
+  password: string,
+  steamId: string,
+  message = "You have been banned from the server."
+): Promise<boolean> {
+  const result = await palworldFetch(ip, port, password, `/v1/api/players/${steamId}/ban`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+  return result !== null;
+}
+
+export async function unbanPlayer(
+  ip: string,
+  port: number,
+  password: string,
+  steamId: string
+): Promise<boolean> {
+  const result = await palworldFetch(ip, port, password, `/v1/api/players/${steamId}/unban`, {
+    method: "DELETE",
   });
   return result !== null;
 }
