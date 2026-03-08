@@ -1114,6 +1114,7 @@ function renderCalibSavePanel(panelEl, s, calibBtn, mapContainer) {
       if (!res.ok) { alert("Save failed: " + (await res.json()).error); saveBtn.disabled = false; saveBtn.textContent = "Save Calibration"; return; }
       const newCal = await res.json();
       mapCalibration = newCal;
+      detailHistoryData = null; // force re-fetch so clouds realign to new calibration
       calibState = null;
       mapContainer.style.cursor = "";
       panelEl.style.display = "none";
@@ -1141,6 +1142,7 @@ function renderCalibSavePanel(panelEl, s, calibBtn, mapContainer) {
     if (!confirm("Reset map calibration to defaults?")) return;
     await fetch("/api/map-calibration", { method: "DELETE" });
     mapCalibration = await (await fetch("/api/map-calibration")).json();
+    detailHistoryData = null; // force re-fetch so clouds realign to new calibration
     calibState = null;
     mapContainer.style.cursor = "";
     panelEl.style.display = "none";
@@ -1165,6 +1167,7 @@ function buildDetailMap(root, s) {
   histBtn.onclick = async () => {
     detailHistoryEnabled = !detailHistoryEnabled;
     histBtn.textContent = detailHistoryEnabled ? "Hide Exploration" : "Show Exploration";
+    if (!detailHistoryEnabled) detailHistoryData = null; // clear cache so next show re-fetches fresh data
     if (detailHistoryEnabled && !detailHistoryData) {
       try {
         const res = await fetch(`/api/containers/${encodeURIComponent(s.id)}/location-history`);
@@ -1340,6 +1343,13 @@ function buildDetailMap(root, s) {
 const STORAGE_GRID = 2048;
 const RENDER_GRID  = 512;
 const RENDER_DS    = STORAGE_GRID / RENDER_GRID; // 4 storage cells per render cell
+
+// World coordinate bounds — must match WORLD_MIN_X/Y and GRID_CELL_SIZE in db.ts
+const GRID_WORLD_SIZE      = 1_447_840;  // total world range covered by the grid (both axes equal)
+const GRID_MIN_LOCATION_Y  = -738_920;   // locationY (east-west)  at render col 0
+const GRID_MIN_LOCATION_X  = -999_940;   // locationX (north-south) at render row 0
+// World units spanned by one render-grid cell (RENDER_DS storage cells × GRID_CELL_SIZE)
+const RENDER_CELL_WORLD    = RENDER_DS * GRID_WORLD_SIZE / STORAGE_GRID; // ≈ 2832.5
 
 // Lookup: 4-bit case (TL=bit3,TR=bit2,BR=bit1,BL=bit0) → [[edge1,edge2],...]
 // Edges: 0=N 1=E 2=S 3=W
@@ -1522,8 +1532,12 @@ function renderDetailCanvas(s) {
 
   // Draw exploration clouds via marching squares polygons
   if (detailHistoryEnabled && detailHistoryData) {
-    const cellW = natW / RENDER_GRID;
-    const cellH = natH / RENDER_GRID;
+    // Map render-grid [col, row] → canvas [x, y] via calibration.
+    // Each render cell covers RENDER_CELL_WORLD world units; col 0 starts at GRID_MIN_LOCATION_Y.
+    const rcToCanvas = (rc, rr) => [
+      (rc * RENDER_CELL_WORLD + GRID_MIN_LOCATION_Y) * scaleX * natW + offsetX * natW,
+      (rr * RENDER_CELL_WORLD + GRID_MIN_LOCATION_X) * scaleY * natH + offsetY * natH,
+    ];
     ctx.save();
     ctx.globalAlpha = 0.65;
     ctx.filter = `blur(${Math.round(3 * ds)}px)`;
@@ -1532,8 +1546,12 @@ function renderDetailCanvas(s) {
       ctx.fillStyle = playerColorMap[ph.playerId] ?? DOT_COLORS[0];
       for (const poly of ph.polygons) {
         ctx.beginPath();
-        ctx.moveTo(poly[0][0] * cellW, poly[0][1] * cellH);
-        for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0] * cellW, poly[i][1] * cellH);
+        const [x0, y0] = rcToCanvas(poly[0][0], poly[0][1]);
+        ctx.moveTo(x0, y0);
+        for (let i = 1; i < poly.length; i++) {
+          const [x, y] = rcToCanvas(poly[i][0], poly[i][1]);
+          ctx.lineTo(x, y);
+        }
         ctx.closePath();
         ctx.fill('evenodd');
       }

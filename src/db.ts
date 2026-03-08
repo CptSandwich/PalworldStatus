@@ -40,6 +40,17 @@ function initLocationSchema() {
       PRIMARY KEY (container_id, player_id)
     )
   `);
+  locationDb.run(`
+    CREATE TABLE IF NOT EXISTS map_calibration (
+      id         INTEGER PRIMARY KEY CHECK (id = 1),
+      p1_world_x REAL NOT NULL, p1_world_y REAL NOT NULL,
+      p1_frac_x  REAL NOT NULL, p1_frac_y  REAL NOT NULL,
+      p2_world_x REAL NOT NULL, p2_world_y REAL NOT NULL,
+      p2_frac_x  REAL NOT NULL, p2_frac_y  REAL NOT NULL,
+      scale_x    REAL NOT NULL, offset_x   REAL NOT NULL,
+      scale_y    REAL NOT NULL, offset_y   REAL NOT NULL
+    )
+  `);
 }
 
 function initSchema() {
@@ -114,17 +125,6 @@ function initSchema() {
   `);
 
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS map_calibration (
-      id         INTEGER PRIMARY KEY CHECK (id = 1),
-      p1_world_x REAL NOT NULL, p1_world_y REAL NOT NULL,
-      p1_frac_x  REAL NOT NULL, p1_frac_y  REAL NOT NULL,
-      p2_world_x REAL NOT NULL, p2_world_y REAL NOT NULL,
-      p2_frac_x  REAL NOT NULL, p2_frac_y  REAL NOT NULL,
-      scale_x    REAL NOT NULL, offset_x   REAL NOT NULL,
-      scale_y    REAL NOT NULL, offset_y   REAL NOT NULL
-    )
-  `);
 }
 
 // ── Audit log ─────────────────────────────────────────────────────────────────
@@ -492,7 +492,7 @@ export interface MapCalibData {
 }
 
 export function getMapCalibration(): MapCalibData | null {
-  const row = getDb().query(`SELECT * FROM map_calibration WHERE id = 1`).get() as Record<string, number> | null;
+  const row = getLocationDb().query(`SELECT * FROM map_calibration WHERE id = 1`).get() as Record<string, number> | null;
   if (!row) return null;
   return {
     scaleX: row.scale_x,   offsetX: row.offset_x,
@@ -510,7 +510,7 @@ export function saveMapCalibration(
   scaleX: number, offsetX: number,
   scaleY: number, offsetY: number,
 ) {
-  getDb().run(
+  getLocationDb().run(
     `INSERT INTO map_calibration
        (id, p1_world_x, p1_world_y, p1_frac_x, p1_frac_y,
             p2_world_x, p2_world_y, p2_frac_x, p2_frac_y,
@@ -530,5 +530,5 @@ export function saveMapCalibration(
 }
 
 export function clearMapCalibration() {
-  getDb().run(`DELETE FROM map_calibration WHERE id = 1`);
+  getLocationDb().run(`DELETE FROM map_calibration WHERE id = 1`);
 }

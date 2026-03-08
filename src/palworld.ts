@@ -101,11 +101,15 @@ export async function getPlayers(
     "/v1/api/players"
   );
   if (!data?.players) return null;
+  // Normalise field names — some API versions use lowercase/snake_case keys.
   // The API prefixes Steam IDs with "steam_" — strip it for consistency with
   // the ADMIN_STEAM_ID env var and known_players DB which use bare 64-bit IDs.
-  return data.players.map((p) => ({
+  return (data.players as any[]).map((p) => ({
     ...p,
-    userId: p.userId?.replace(/^steam_/i, "") ?? p.userId,
+    playerId:    p.playerId    ?? p.playerid    ?? p.player_id    ?? "",
+    userId:     (p.userId     ?? p.userid)?.replace(/^steam_/i, "") ?? "",
+    accountId:   p.accountId   ?? p.accountid   ?? p.account_id   ?? "",
+    accountName: p.accountName ?? p.accountname ?? p.account_name ?? "",
   }));
 }
 

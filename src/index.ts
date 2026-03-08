@@ -89,7 +89,7 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST ?? "localhost";
 // In-memory tracking for grid-based location history
 // Key: `${containerId}:${steamId}` → last recorded grid position + world coords
 const lastGridPositions = new Map<string, { worldX: number; worldY: number; col: number; row: number; recentSpeeds: number[] }>();
-const CLOUD_RADIUS_CELLS       = 28;       // storage grid cells radius per point (~198m)
+const CLOUD_RADIUS_CELLS       = 7;        // storage grid cells radius per point (~50m)
 const MAX_TELEPORT_WORLD_UNITS = 50_000;   // skip interpolation if jump exceeds ~1.5× Jetragon max
 const SPEED_JUMP_MULTIPLIER    = 4;        // current speed must be 4× rolling avg to suspect teleport
 const MIN_SPEED_TELEPORT       = 8_000;    // min distance (world units) to apply speed-continuity check
