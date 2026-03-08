@@ -167,6 +167,9 @@ function renderAuth() {
     document.getElementById("role-toggle-btn").onclick = () => {
       viewAsWhitelisted = !viewAsWhitelisted;
       renderAuth();
+      // Force full landing page rebuild so admin sections appear/disappear immediately
+      const root = document.getElementById("view-root");
+      if (root) root.innerHTML = "";
       renderCurrentView();
     };
   }
@@ -402,9 +405,11 @@ function buildServerCard(s) {
     const secs = s.idleCountdownSeconds % 60;
     const countdown = el("div", { class: "idle-countdown" });
     countdown.appendChild(el("span", {}, `Idle shutdown in ${mins}:${String(secs).padStart(2, "0")}`));
-    const cancelBtn = el("button", { class: "btn btn-small btn-secondary" }, "Cancel");
-    cancelBtn.onclick = (e) => { e.stopPropagation(); cancelIdle(s.id); };
-    countdown.appendChild(cancelBtn);
+    if (isAdmin()) {
+      const cancelBtn = el("button", { class: "btn btn-small btn-secondary" }, "Cancel");
+      cancelBtn.onclick = (e) => { e.stopPropagation(); cancelIdle(s.id); };
+      countdown.appendChild(cancelBtn);
+    }
     body.appendChild(countdown);
   }
 
@@ -599,9 +604,11 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
     const secs = s.idleCountdownSeconds % 60;
     const countdown = el("div", { class: "idle-countdown" });
     countdown.appendChild(el("span", {}, `Idle shutdown in ${mins}:${String(secs).padStart(2, "0")}`));
-    const cancelBtn = el("button", { class: "btn btn-small btn-secondary" }, "Cancel");
-    cancelBtn.onclick = () => cancelIdle(s.id);
-    countdown.appendChild(cancelBtn);
+    if (isAdmin()) {
+      const cancelBtn = el("button", { class: "btn btn-small btn-secondary" }, "Cancel");
+      cancelBtn.onclick = () => cancelIdle(s.id);
+      countdown.appendChild(cancelBtn);
+    }
     infoPanel.appendChild(countdown);
   }
   dyn.appendChild(infoPanel);

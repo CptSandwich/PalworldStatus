@@ -156,6 +156,12 @@ a:hover { color: var(--accent-hover); }
   gap: 36px;
 }
 
+#view-root {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+
 /* ── Section titles ────────────────────────────────────────────────────────── */
 
 .section-header {
