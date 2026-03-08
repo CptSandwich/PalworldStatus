@@ -27,6 +27,8 @@ let mapPanY = 0;
 let mapEventCleanup = null;          // fn to remove window drag listeners
 let calibState = null;               // null | { step, points[], pendingFracX, pendingFracY }
 let detailFullyRendered = false;     // true after first detail page render; resets on navigation
+let canvasAnimId = null;             // requestAnimationFrame handle for canvas pulse loop
+let canvasFrameLastTs = 0;           // timestamp of last canvas render (for fps throttle)
 let savedCronValues = new Map();     // preserves unsaved cron text across landing page polls
 
 // Player dot colours (cycle through palette)
@@ -178,6 +180,7 @@ function onHashChange() {
     if (mapEventCleanup) { mapEventCleanup(); mapEventCleanup = null; }
   } else {
     detailContainerId = null;
+    if (canvasAnimId) { cancelAnimationFrame(canvasAnimId); canvasAnimId = null; }
   }
   renderCurrentView();
 }
@@ -1192,27 +1195,47 @@ function buildDetailMap(root, s) {
   };
 
   mapImg.onload = () => renderDetailCanvas(s);
-  window.addEventListener("resize", () => renderDetailCanvas(s), { once: false });
+  window.addEventListener("resize", () => renderDetailCanvas(
+    lastStatus?.find(sv => sv.serverId === detailContainerId) ?? s), { once: false });
 
-  // Draw after append (image might already be cached)
-  requestAnimationFrame(() => renderDetailCanvas(s));
+  // Start pulse animation loop (throttled to ~24fps)
+  if (canvasAnimId) cancelAnimationFrame(canvasAnimId);
+  canvasFrameLastTs = 0;
+  function canvasFrame(ts) {
+    if (!detailContainerId || !detailCanvas) { canvasAnimId = null; return; }
+    canvasAnimId = requestAnimationFrame(canvasFrame);
+    if (ts - canvasFrameLastTs < 42) return; // ~24fps
+    canvasFrameLastTs = ts;
+    const server = lastStatus?.find(sv => sv.serverId === detailContainerId) ?? s;
+    renderDetailCanvas(server);
+  }
+  canvasAnimId = requestAnimationFrame(canvasFrame);
 }
 
 function renderDetailCanvas(s) {
   if (!detailCanvas || !detailMapImg) return;
   const ctx = detailCanvas.getContext("2d");
 
-  detailCanvas.width = detailMapImg.offsetWidth;
-  detailCanvas.height = detailMapImg.offsetHeight;
-  ctx.clearRect(0, 0, detailCanvas.width, detailCanvas.height);
+  // Render at natural image resolution so canvas stays crisp when CSS-zoomed
+  const natW = detailMapImg.naturalWidth  || detailMapImg.offsetWidth;
+  const natH = detailMapImg.naturalHeight || detailMapImg.offsetHeight;
+  if (!natW || !natH) return;
+  if (detailCanvas.width !== natW || detailCanvas.height !== natH) {
+    detailCanvas.width  = natW;
+    detailCanvas.height = natH;
+  }
+  ctx.clearRect(0, 0, natW, natH);
 
   if (!mapCalibration) return;
   const { scaleX, offsetX, scaleY, offsetY } = mapCalibration;
 
+  // ds: scale factor so dot/text sizes are consistent at natural resolution
+  const ds = natW / (detailMapImg.offsetWidth || natW);
+
   function worldToCanvas(wx, wy) {
     return {
-      cx: (wx * scaleX + offsetX) * detailCanvas.width,
-      cy: (wy * scaleY + offsetY) * detailCanvas.height,
+      cx: (wx * scaleX + offsetX) * natW,
+      cy: (wy * scaleY + offsetY) * natH,
     };
   }
 
@@ -1225,11 +1248,11 @@ function renderDetailCanvas(s) {
     }
   }
 
-  // Draw exploration fog clouds
+  // Draw exploration fog — semi-transparent filled circles with minimal blur
   if (detailHistoryEnabled && detailHistoryData) {
     ctx.save();
-    ctx.filter = "blur(7px)";
-    ctx.globalAlpha = 0.80;
+    ctx.filter = `blur(${Math.round(3 * ds)}px)`;
+    ctx.globalAlpha = 0.90;
     for (const ph of detailHistoryData.players) {
       if (detailHiddenPlayers.has(ph.steamId)) continue;
       const color = playerColors[ph.steamId] ?? DOT_COLORS[0];
@@ -1237,119 +1260,128 @@ function renderDetailCanvas(s) {
       for (const pt of ph.points) {
         const { cx, cy } = worldToCanvas(pt.x, pt.y);
         ctx.beginPath();
-        ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 7 * ds, 0, Math.PI * 2);
         ctx.fill();
       }
     }
     ctx.restore();
+    ctx.filter = "none"; // explicit reset — belt-and-suspenders for browser compat
   }
 
-  // Draw live player dots
+  // Draw live player dots with pulse ring
+  const pulseT = (Date.now() % 1600) / 1600; // 0→1, 1.6s period
   for (const p of s.players) {
     const color = playerColors[p.steamId] ?? DOT_COLORS[0];
     if (!p.locationX && !p.locationY) continue;
     const { cx, cy } = worldToCanvas(p.locationX, p.locationY);
 
+    // Expanding pulse ring
+    ctx.save();
+    ctx.globalAlpha = (1 - pulseT) * 0.65;
     ctx.beginPath();
-    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    ctx.arc(cx, cy, (5 + pulseT * 14) * ds, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 * ds;
+    ctx.stroke();
+    ctx.restore();
+
+    // Solid dot
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5 * ds, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.shadowColor = color;
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = 8 * ds;
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    ctx.font = "11px 'Noto Sans', sans-serif";
+    // Name label
+    ctx.font = `${Math.round(11 * ds)}px 'Noto Sans', sans-serif`;
     ctx.fillStyle = "#ffffff";
     ctx.shadowColor = "rgba(0,0,0,0.9)";
-    ctx.shadowBlur = 4;
-    ctx.fillText(p.name, cx + 8, cy + 4);
+    ctx.shadowBlur = 4 * ds;
+    ctx.fillText(p.name, cx + 8 * ds, cy + 4 * ds);
     ctx.shadowBlur = 0;
   }
 
-  // Draw calibration exclusion mask:
-  // When picking Point 2, darken the area near Point 1 to signal it's
-  // too close for accurate calibration.
+  // Calibration exclusion mask (step 2: darken area near Point 1)
   if (calibState && calibState.points.length === 1) {
     const p1 = calibState.points[0];
-    const p1x = p1.fracX * detailCanvas.width;
-    const p1y = p1.fracY * detailCanvas.height;
-    // Exclusion radius: 30% of the shorter canvas dimension
-    const excR = Math.min(detailCanvas.width, detailCanvas.height) * 0.30;
+    const p1x = p1.fracX * natW;
+    const p1y = p1.fracY * natH;
+    const excR = Math.min(natW, natH) * 0.30;
 
     ctx.save();
 
-    // Layer 1: subtle global dim so the good area looks lighter than the exclusion zone
+    // Subtle global dim
     ctx.fillStyle = "rgba(0, 0, 0, 0.30)";
-    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
+    ctx.fillRect(0, 0, natW, natH);
 
-    // Layer 2: solid dark fill clipped to the exclusion circle — sharp inner boundary
+    // Heavy solid fill inside exclusion circle
     ctx.beginPath();
     ctx.arc(p1x, p1y, excR, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(0, 0, 0, 0.80)";
     ctx.fill();
 
-    // Layer 3: reddish glow at the circle edge for a crisp, visible border
+    // Reddish glow at edge
     const edgeGrad = ctx.createRadialGradient(p1x, p1y, excR * 0.88, p1x, p1y, excR * 1.08);
     edgeGrad.addColorStop(0,   "rgba(200, 50, 50, 0.70)");
     edgeGrad.addColorStop(0.5, "rgba(200, 50, 50, 0.35)");
     edgeGrad.addColorStop(1,   "rgba(200, 50, 50, 0)");
     ctx.fillStyle = edgeGrad;
-    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
+    ctx.fillRect(0, 0, natW, natH);
 
-    // "Too close" label centred inside the exclusion zone
-    ctx.font = "bold 14px 'Rajdhani', 'Noto Sans', sans-serif";
+    ctx.font = `bold ${Math.round(14 * ds)}px 'Rajdhani', 'Noto Sans', sans-serif`;
     ctx.textAlign = "center";
     ctx.fillStyle = "rgba(255, 120, 120, 1.0)";
-    ctx.shadowColor = "rgba(0,0,0,1)"; ctx.shadowBlur = 8;
+    ctx.shadowColor = "rgba(0,0,0,1)"; ctx.shadowBlur = 8 * ds;
     ctx.fillText("⚠ Too close — pick a more distant point", p1x, p1y + excR * 0.55);
 
     ctx.restore();
   }
 
-  // Draw calibration markers
+  // Calibration markers
   if (calibState) {
     const CALIB_COLORS = ["#ff4444", "#ff8800"];
 
-    // Confirmed points
     calibState.points.forEach((pt, i) => {
-      const px = pt.fracX * detailCanvas.width;
-      const py = pt.fracY * detailCanvas.height;
+      const px = pt.fracX * natW;
+      const py = pt.fracY * natH;
       const col = CALIB_COLORS[i];
       ctx.beginPath();
-      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.arc(px, py, 9 * ds, 0, Math.PI * 2);
       ctx.fillStyle = col + "33";
       ctx.strokeStyle = col;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * ds;
       ctx.fill();
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(px - 14, py); ctx.lineTo(px + 14, py);
-      ctx.moveTo(px, py - 14); ctx.lineTo(px, py + 14);
-      ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      ctx.moveTo(px - 14 * ds, py); ctx.lineTo(px + 14 * ds, py);
+      ctx.moveTo(px, py - 14 * ds); ctx.lineTo(px, py + 14 * ds);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5 * ds;
       ctx.stroke();
-      ctx.font = "bold 11px 'Noto Sans', sans-serif";
+      ctx.font = `bold ${Math.round(11 * ds)}px 'Noto Sans', sans-serif`;
       ctx.fillStyle = col;
-      ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 4;
-      ctx.fillText(`P${i + 1}`, px + 11, py - 9);
+      ctx.textAlign = "left";
+      ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 4 * ds;
+      ctx.fillText(`P${i + 1}`, px + 11 * ds, py - 9 * ds);
       ctx.shadowBlur = 0;
     });
 
-    // Pending click marker (dashed, before world coords confirmed)
     if (calibState.pendingFracX !== null) {
       const i = calibState.points.length;
-      const px = calibState.pendingFracX * detailCanvas.width;
-      const py = calibState.pendingFracY * detailCanvas.height;
+      const px = calibState.pendingFracX * natW;
+      const py = calibState.pendingFracY * natH;
       const col = CALIB_COLORS[i] ?? "#ffffff";
       ctx.beginPath();
-      ctx.arc(px, py, 9, 0, Math.PI * 2);
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.arc(px, py, 9 * ds, 0, Math.PI * 2);
+      ctx.setLineDash([4 * ds, 4 * ds]);
+      ctx.strokeStyle = col; ctx.lineWidth = 2 * ds;
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.beginPath();
-      ctx.moveTo(px - 14, py); ctx.lineTo(px + 14, py);
-      ctx.moveTo(px, py - 14); ctx.lineTo(px, py + 14);
-      ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      ctx.moveTo(px - 14 * ds, py); ctx.lineTo(px + 14 * ds, py);
+      ctx.moveTo(px, py - 14 * ds); ctx.lineTo(px, py + 14 * ds);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5 * ds;
       ctx.stroke();
     }
   }
