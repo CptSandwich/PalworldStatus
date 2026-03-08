@@ -21,6 +21,7 @@ import {
   logAudit,
   getRecentAuditLog,
   upsertPlayer,
+  upsertPlayerAuth,
   getAllPlayers,
   getKnownPlayersByContainer,
   setPlayerStatus,
@@ -85,7 +86,7 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST ?? "localhost";
 // In-memory last-known positions for location history anti-aliasing
 // Key: `${containerId}:${steamId}` → { x, y }
 const lastPositions = new Map<string, { x: number; y: number }>();
-const MIN_MOVE_DISTANCE = 5; // minimum coordinate delta before recording a new location point
+const MIN_MOVE_DISTANCE = 5_000; // ~50m in UE4 cm units before recording a new location point
 
 // Cache of last known API-reported server names (populated when server is online)
 const apiNameCache = new Map<string, string>();
@@ -176,7 +177,9 @@ app.get("/api/status", requireWhitelisted, async (c) => {
       if (players) {
         for (const p of players) {
           if (p.userId) {
-            upsertPlayer(p.userId, p.name, displayName, container.id, p.level ?? 0, p.build_object_count ?? 0);
+            upsertPlayer(p.userId, p.name, displayName, container.id, p.level ?? 0);
+            // Populate Steam display name from the API's accountName field
+            if (p.accountName) upsertPlayerAuth(p.userId, p.accountName);
 
             // Track location history with anti-aliasing
             if (p.location_x !== undefined && p.location_y !== undefined) {
@@ -218,14 +221,12 @@ app.get("/api/status", requireWhitelisted, async (c) => {
           level: p.level,
           locationX: p.location_x,
           locationY: p.location_y,
-          buildObjectCount: p.build_object_count,
           ping: p.ping,
         })),
         metrics: metrics ? {
           fps: metrics.serverfps,
           frameTime: metrics.serverframetime,
           uptime: metrics.uptime,
-          baseCamps: metrics.num_base_camps,
           days: metrics.days,
         } : null,
         maxPlayers: info?.maxplayers ?? null,

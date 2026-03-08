@@ -170,7 +170,6 @@ export interface KnownPlayer {
   last_server: string | null;
   last_container_id: string | null;
   level: number | null;
-  build_object_count: number | null;
   status: "whitelisted" | "blacklisted";
 }
 
@@ -179,21 +178,19 @@ export function upsertPlayer(
   characterName: string,
   serverName: string,
   containerId: string,
-  level: number,
-  buildObjectCount: number
+  level: number
 ) {
   getDb().run(
     `INSERT INTO known_players
-       (steam_id, display_name, character_name, last_seen, last_server, last_container_id, level, build_object_count)
-     VALUES (?, '', ?, datetime('now'), ?, ?, ?, ?)
+       (steam_id, display_name, character_name, last_seen, last_server, last_container_id, level)
+     VALUES (?, '', ?, datetime('now'), ?, ?, ?)
      ON CONFLICT(steam_id) DO UPDATE SET
        character_name      = excluded.character_name,
        last_seen           = excluded.last_seen,
        last_server         = excluded.last_server,
        last_container_id   = excluded.last_container_id,
-       level               = excluded.level,
-       build_object_count  = excluded.build_object_count`,
-    [steamId, characterName, serverName, containerId, level, buildObjectCount]
+       level               = excluded.level`,
+    [steamId, characterName, serverName, containerId, level]
   );
 }
 

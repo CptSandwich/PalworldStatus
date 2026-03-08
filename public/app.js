@@ -32,6 +32,21 @@ let savedCronValues = new Map();     // preserves unsaved cron text across landi
 // Player dot colours (cycle through palette)
 const DOT_COLORS = ["#3ecfcf", "#4caf6e", "#9b6bdf", "#e05252", "#f0c040", "#5ab4e0"];
 
+// ── In-game coordinate conversion ─────────────────────────────────────────────
+// Converts raw UE4 cm coordinates (from the REST API) to the in-game −512..512
+// coordinate system shown on the Palworld HUD and community maps.
+// Bounds sourced from DT_WorldMapUIData.json (confirmed by JannesV/palworld-ui).
+const MAP_COORD_ORIGIN_X = -999_940;
+const MAP_COORD_RANGE_X  =  1_447_840; // 447900 − (−999940)
+const MAP_COORD_ORIGIN_Y = -738_920;
+const MAP_COORD_RANGE_Y  =  1_447_840; // 708920 − (−738920)
+
+function toMapCoords(x, y) {
+  const mx = Math.round(((x - MAP_COORD_ORIGIN_X) / MAP_COORD_RANGE_X) * 1024 - 512);
+  const my = Math.round(((y - MAP_COORD_ORIGIN_Y) / MAP_COORD_RANGE_Y) * 1024 - 512);
+  return `${mx}, ${my}`;
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -537,7 +552,6 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
     };
     addMetric("FPS", m.fps != null ? m.fps.toFixed(1) : "—");
     addMetric("Frame time", m.frameTime != null ? `${m.frameTime.toFixed(1)}ms` : "—");
-    addMetric("Base camps", m.baseCamps != null ? String(m.baseCamps) : "—");
     if (m.days != null) addMetric("Days", String(m.days));
     if (m.uptime != null) {
       const h = Math.floor(m.uptime / 3600);
@@ -623,18 +637,20 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
         // Admin actions
         if (currentUser?.role === "admin") {
           const actionsEl = el("div", { class: "player-actions" });
-          if (isConnected) {
+          const isBanned = knownData?.status === "blacklisted";
+          if (isConnected && !isBanned) {
             const kickBtn = el("button", { class: "btn btn-small btn-secondary" }, "Kick");
             kickBtn.onclick = () => doPlayerAction(s.id, steamId, "kick", name, kickBtn);
             actionsEl.appendChild(kickBtn);
           }
-          const banBtn = el("button", { class: "btn btn-small btn-danger" }, "Ban");
-          banBtn.onclick = () => doPlayerAction(s.id, steamId, "ban", name, banBtn);
-          actionsEl.appendChild(banBtn);
-          if (knownData?.status === "blacklisted") {
+          if (isBanned) {
             const unbanBtn = el("button", { class: "btn btn-small btn-secondary" }, "Unban");
             unbanBtn.onclick = () => doPlayerAction(s.id, steamId, "unban", name, unbanBtn);
             actionsEl.appendChild(unbanBtn);
+          } else {
+            const banBtn = el("button", { class: "btn btn-small btn-danger" }, "Ban");
+            banBtn.onclick = () => doPlayerAction(s.id, steamId, "ban", name, banBtn);
+            actionsEl.appendChild(banBtn);
           }
           header.appendChild(actionsEl);
         }
@@ -652,9 +668,8 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
           };
 
           if (isConnected && liveData) {
-            if (liveData.locationX !== undefined) addDetail("Coords", `${Math.round(liveData.locationX)}, ${Math.round(liveData.locationY)}`);
-            if (liveData.buildObjectCount !== undefined) addDetail("Buildings", String(liveData.buildObjectCount));
-            if (liveData.ping !== undefined) addDetail("Ping", `${liveData.ping}ms`);
+            if (liveData.locationX !== undefined) addDetail("Coords", toMapCoords(liveData.locationX, liveData.locationY));
+            if (liveData.ping !== undefined) addDetail("Ping", `${Math.round(liveData.ping)}ms`);
           }
           if (steamId) addDetail("Steam ID", steamId);
           if (knownData?.character_name && knownData.character_name !== name) addDetail("Character", knownData.character_name);
@@ -932,9 +947,9 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
   // World coordinate inputs
   const inputRow = el("div", { class: "calib-input-row" });
   const wxLabel = el("label", { class: "calib-label" }, `World X:`);
-  const wxInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -320" });
+  const wxInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -63356" });
   const wyLabel = el("label", { class: "calib-label" }, `World Y:`);
-  const wyInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. 215" });
+  const wyInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -55026" });
   inputRow.appendChild(wxLabel); inputRow.appendChild(wxInput);
   inputRow.appendChild(wyLabel); inputRow.appendChild(wyInput);
   panelEl.appendChild(inputRow);

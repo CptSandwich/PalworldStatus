@@ -19,13 +19,13 @@ export interface ServerMetrics {
   currentplayernum: number;
   maxplayernum: number;
   uptime: number;         // server uptime in seconds
-  num_base_camps: number;
   days: number | null;    // in-game world days (not present in all versions)
 }
 
 export interface PlayerInfo {
   name: string;
   accountId: string;
+  accountName: string; // Steam account name
   playerId: string;
   userId: string; // Steam ID
   ip: string;
@@ -33,7 +33,6 @@ export interface PlayerInfo {
   location_x: number;
   location_y: number;
   level: number;
-  build_object_count: number;
 }
 
 function basicAuth(password: string): string {
@@ -101,7 +100,13 @@ export async function getPlayers(
     password,
     "/v1/api/players"
   );
-  return data?.players ?? null;
+  if (!data?.players) return null;
+  // The API prefixes Steam IDs with "steam_" — strip it for consistency with
+  // the ADMIN_STEAM_ID env var and known_players DB which use bare 64-bit IDs.
+  return data.players.map((p) => ({
+    ...p,
+    userId: p.userId?.replace(/^steam_/i, "") ?? p.userId,
+  }));
 }
 
 export async function broadcast(
