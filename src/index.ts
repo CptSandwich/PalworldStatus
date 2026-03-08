@@ -25,6 +25,7 @@ import {
   getAllPlayers,
   getKnownPlayersByContainer,
   setPlayerStatus,
+  setGameBanned,
   deletePlayer,
   getAllSchedules,
   upsertSchedule,
@@ -721,8 +722,7 @@ app.post("/api/containers/:id/players/:steamId/ban", requireAdmin, async (c) => 
 
   const ok = await banPlayer(ip, container.restPort, container.restPassword, steamId, body.message);
 
-  // Also set blacklisted in DB
-  setPlayerStatus(steamId, "blacklisted");
+  setGameBanned(steamId, true);
 
   logAudit("BAN", {
     steamId: user.steamId,
@@ -747,6 +747,8 @@ app.delete("/api/containers/:id/players/:steamId/ban", requireAdmin, async (c) =
   if (!ip) return c.json({ error: "Container not reachable" }, 503);
 
   const ok = await unbanPlayer(ip, container.restPort, container.restPassword, steamId);
+
+  setGameBanned(steamId, false);
 
   logAudit("UNBAN", {
     steamId: user.steamId,

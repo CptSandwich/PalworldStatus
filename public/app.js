@@ -33,17 +33,18 @@ let savedCronValues = new Map();     // preserves unsaved cron text across landi
 const DOT_COLORS = ["#3ecfcf", "#4caf6e", "#9b6bdf", "#e05252", "#f0c040", "#5ab4e0"];
 
 // ── In-game coordinate conversion ─────────────────────────────────────────────
-// Converts raw UE4 cm coordinates (from the REST API) to the in-game −512..512
-// coordinate system shown on the Palworld HUD and community maps.
-// Bounds sourced from DT_WorldMapUIData.json (confirmed by JannesV/palworld-ui).
-const MAP_COORD_ORIGIN_X = -999_940;
-const MAP_COORD_RANGE_X  =  1_447_840; // 447900 − (−999940)
-const MAP_COORD_ORIGIN_Y = -738_920;
-const MAP_COORD_RANGE_Y  =  1_447_840; // 708920 − (−738920)
+// Converts raw UE4 cm coordinates (from the REST API) to the in-game coordinate
+// system shown on the Palworld HUD and community maps.
+// Formula from the palworld-coord project (offsets verified against live data).
+// NOTE: UE4 axes are intentionally swapped — the map's X axis corresponds to
+// UE4's Y axis and vice versa.
+const MAP_COORD_OFFSET_X = 123_888;
+const MAP_COORD_OFFSET_Y = 158_000;
+const MAP_COORD_SCALE    =     459;
 
-function toMapCoords(x, y) {
-  const mx = Math.round(((x - MAP_COORD_ORIGIN_X) / MAP_COORD_RANGE_X) * 1024 - 512);
-  const my = Math.round(((y - MAP_COORD_ORIGIN_Y) / MAP_COORD_RANGE_Y) * 1024 - 512);
+function toMapCoords(rawX, rawY) {
+  const mx = Math.round((rawY - MAP_COORD_OFFSET_Y) / MAP_COORD_SCALE);
+  const my = Math.round((rawX + MAP_COORD_OFFSET_X) / MAP_COORD_SCALE);
   return `${mx}, ${my}`;
 }
 
@@ -466,6 +467,10 @@ async function renderDetailPage(s) {
     const dyn = document.getElementById("dp-dynamic");
     dyn.innerHTML = "";
     _buildDetailDynamic(dyn, s, gameStatus);
+    if (calibState) {
+      calibState.latestServer = s;
+      calibState.refreshPanel();
+    }
     renderDetailCanvas(s);
     void refreshChatLog(s.id);
     return;
@@ -637,17 +642,19 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
         // Admin actions
         if (currentUser?.role === "admin") {
           const actionsEl = el("div", { class: "player-actions" });
-          const isBanned = knownData?.status === "blacklisted";
-          if (isConnected && !isBanned) {
-            const kickBtn = el("button", { class: "btn btn-small btn-secondary" }, "Kick");
-            kickBtn.onclick = () => doPlayerAction(s.id, steamId, "kick", name, kickBtn);
-            actionsEl.appendChild(kickBtn);
-          }
+          const isBanned = knownData?.game_banned === 1;
           if (isBanned) {
+            // Player was banned via this app — only show Unban
             const unbanBtn = el("button", { class: "btn btn-small btn-secondary" }, "Unban");
             unbanBtn.onclick = () => doPlayerAction(s.id, steamId, "unban", name, unbanBtn);
             actionsEl.appendChild(unbanBtn);
           } else {
+            // Default: Kick (connected only) + Ban
+            if (isConnected) {
+              const kickBtn = el("button", { class: "btn btn-small btn-secondary" }, "Kick");
+              kickBtn.onclick = () => doPlayerAction(s.id, steamId, "kick", name, kickBtn);
+              actionsEl.appendChild(kickBtn);
+            }
             const banBtn = el("button", { class: "btn btn-small btn-danger" }, "Ban");
             banBtn.onclick = () => doPlayerAction(s.id, steamId, "ban", name, banBtn);
             actionsEl.appendChild(banBtn);
@@ -1091,12 +1098,12 @@ function buildDetailMap(root, s) {
         calibBtn.textContent = mapCalibration?.calibrated ? "Recalibrate" : "Calibrate Map";
         renderDetailCanvas(s);
       } else {
-        calibState = { step: 1, points: [], pendingFracX: null, pendingFracY: null, refreshPanel: () => {} };
+        calibState = { step: 1, points: [], pendingFracX: null, pendingFracY: null, latestServer: s, refreshPanel: () => {} };
         mapContainer.style.cursor = "crosshair";
         calibBtn.textContent = "Cancel Calibration";
         calibPanelEl.style.display = "";
         renderCalibPanel(calibPanelEl, s, calibBtn, mapContainer);
-        calibState.refreshPanel = () => renderCalibPanel(calibPanelEl, s, calibBtn, mapContainer);
+        calibState.refreshPanel = () => renderCalibPanel(calibPanelEl, calibState.latestServer, calibBtn, mapContainer);
       }
     };
     sectionHeader.appendChild(calibBtn);
@@ -1221,8 +1228,8 @@ function renderDetailCanvas(s) {
   // Draw exploration fog clouds
   if (detailHistoryEnabled && detailHistoryData) {
     ctx.save();
-    ctx.filter = "blur(18px)";
-    ctx.globalAlpha = 0.60;
+    ctx.filter = "blur(7px)";
+    ctx.globalAlpha = 0.80;
     for (const ph of detailHistoryData.players) {
       if (detailHiddenPlayers.has(ph.steamId)) continue;
       const color = playerColors[ph.steamId] ?? DOT_COLORS[0];
@@ -1230,7 +1237,7 @@ function renderDetailCanvas(s) {
       for (const pt of ph.points) {
         const { cx, cy } = worldToCanvas(pt.x, pt.y);
         ctx.beginPath();
-        ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 10, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -1261,10 +1268,7 @@ function renderDetailCanvas(s) {
 
   // Draw calibration exclusion mask:
   // When picking Point 2, darken the area near Point 1 to signal it's
-  // too close for accurate calibration. We use two layers:
-  //   1. A light overlay across the whole canvas (dims everywhere slightly)
-  //   2. A heavy radial gradient centered on P1 (darkens the exclusion zone)
-  // Outside excR the only effect is the subtle base dim; inside it gets dark.
+  // too close for accurate calibration.
   if (calibState && calibState.points.length === 1) {
     const p1 = calibState.points[0];
     const p1x = p1.fracX * detailCanvas.width;
@@ -1272,25 +1276,33 @@ function renderDetailCanvas(s) {
     // Exclusion radius: 30% of the shorter canvas dimension
     const excR = Math.min(detailCanvas.width, detailCanvas.height) * 0.30;
 
-    // Layer 1: subtle global dim so the "good" area is visually distinct
-    ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
-    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
-
-    // Layer 2: heavy dark cloud centered on P1, fading out at excR
-    const grad = ctx.createRadialGradient(p1x, p1y, 0, p1x, p1y, excR);
-    grad.addColorStop(0,   "rgba(0, 0, 0, 0.68)");
-    grad.addColorStop(0.55, "rgba(0, 0, 0, 0.50)");
-    grad.addColorStop(1,   "rgba(0, 0, 0, 0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
-
-    // "Too close" label just below the exclusion zone centre
     ctx.save();
-    ctx.font = "bold 12px 'Noto Sans', sans-serif";
+
+    // Layer 1: subtle global dim so the good area looks lighter than the exclusion zone
+    ctx.fillStyle = "rgba(0, 0, 0, 0.30)";
+    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
+
+    // Layer 2: solid dark fill clipped to the exclusion circle — sharp inner boundary
+    ctx.beginPath();
+    ctx.arc(p1x, p1y, excR, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.80)";
+    ctx.fill();
+
+    // Layer 3: reddish glow at the circle edge for a crisp, visible border
+    const edgeGrad = ctx.createRadialGradient(p1x, p1y, excR * 0.88, p1x, p1y, excR * 1.08);
+    edgeGrad.addColorStop(0,   "rgba(200, 50, 50, 0.70)");
+    edgeGrad.addColorStop(0.5, "rgba(200, 50, 50, 0.35)");
+    edgeGrad.addColorStop(1,   "rgba(200, 50, 50, 0)");
+    ctx.fillStyle = edgeGrad;
+    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
+
+    // "Too close" label centred inside the exclusion zone
+    ctx.font = "bold 14px 'Rajdhani', 'Noto Sans', sans-serif";
     ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(255, 120, 120, 0.85)";
-    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 5;
-    ctx.fillText("Too close", p1x, p1y + excR * 0.55);
+    ctx.fillStyle = "rgba(255, 120, 120, 1.0)";
+    ctx.shadowColor = "rgba(0,0,0,1)"; ctx.shadowBlur = 8;
+    ctx.fillText("⚠ Too close — pick a more distant point", p1x, p1y + excR * 0.55);
+
     ctx.restore();
   }
 

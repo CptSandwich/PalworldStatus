@@ -48,6 +48,7 @@ function initSchema() {
     "ALTER TABLE known_players ADD COLUMN last_container_id TEXT",
     "ALTER TABLE known_players ADD COLUMN level INTEGER",
     "ALTER TABLE known_players ADD COLUMN build_object_count INTEGER",
+    "ALTER TABLE known_players ADD COLUMN game_banned INTEGER NOT NULL DEFAULT 0",
   ];
   for (const sql of migrations) {
     try { db.run(sql); } catch { /* column already exists */ }
@@ -171,6 +172,7 @@ export interface KnownPlayer {
   last_container_id: string | null;
   level: number | null;
   status: "whitelisted" | "blacklisted";
+  game_banned: number; // 1 if banned via this app's Ban button, 0 otherwise
 }
 
 export function upsertPlayer(
@@ -235,6 +237,13 @@ export function setPlayerStatus(
   getDb().run(
     `UPDATE known_players SET status = ? WHERE steam_id = ?`,
     [status, steamId]
+  );
+}
+
+export function setGameBanned(steamId: string, banned: boolean) {
+  getDb().run(
+    `UPDATE known_players SET game_banned = ? WHERE steam_id = ?`,
+    [banned ? 1 : 0, steamId]
   );
 }
 
