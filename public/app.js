@@ -50,6 +50,15 @@ function toMapCoords(rawX, rawY) {
   return `${mx}, ${my}`;
 }
 
+// Inverse: in-game display coords (as shown on Palworld HUD) → raw UE4 API coords
+// displayX = first number shown (mx), displayY = second number shown (my)
+function fromMapCoords(displayX, displayY) {
+  return {
+    rawX: displayY * MAP_COORD_SCALE - MAP_COORD_OFFSET_X,
+    rawY: displayX * MAP_COORD_SCALE + MAP_COORD_OFFSET_Y,
+  };
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -913,7 +922,7 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
   panelEl.appendChild(title);
 
   const hint = el("p", { class: "calib-hint" },
-    "Click the map where you know a player's position, then enter their world coordinates below. " +
+    "Click the map where you know a player's position, then enter the coordinates shown on the Palworld HUD. " +
     "Use two distant points for best accuracy.");
   panelEl.appendChild(hint);
 
@@ -921,7 +930,7 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
   calibState.points.forEach((pt, i) => {
     const row = el("div", { class: "calib-confirmed-point" });
     row.style.borderLeftColor = CALIB_COLORS[i];
-    row.textContent = `P${i + 1}: world (${Math.round(pt.worldX)}, ${Math.round(pt.worldY)})  ·  map (${(pt.fracX * 100).toFixed(1)}%, ${(pt.fracY * 100).toFixed(1)}%)`;
+    row.textContent = `P${i + 1}: HUD (${toMapCoords(pt.worldX, pt.worldY)})  ·  map (${(pt.fracX * 100).toFixed(1)}%, ${(pt.fracY * 100).toFixed(1)}%)`;
     panelEl.appendChild(row);
   });
 
@@ -941,12 +950,15 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
       if (!p.locationX && !p.locationY) continue;
       const row = el("div", { class: "calib-ref-row" });
       const nameEl = el("span", { class: "calib-ref-name" }, p.name || p.steamId);
+      const dispCoords = toMapCoords(p.locationX, p.locationY).split(", ");
       const coordsEl = el("span", { class: "calib-ref-coords" },
-        `X: ${Math.round(p.locationX)}  Y: ${Math.round(p.locationY)}`);
+        `${dispCoords[0]}, ${dispCoords[1]}`);
       const useBtn = el("button", { class: "btn btn-small btn-secondary" }, "Use");
       useBtn.onclick = () => {
-        wxInput.value = Math.round(p.locationX);
-        wyInput.value = Math.round(p.locationY);
+        wxInput.value = dispCoords[0];
+        wyInput.value = dispCoords[1];
+        calibState.inputX = dispCoords[0];
+        calibState.inputY = dispCoords[1];
       };
       row.appendChild(nameEl); row.appendChild(coordsEl); row.appendChild(useBtn);
       refList.appendChild(row);
@@ -954,12 +966,17 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
     panelEl.appendChild(refList);
   }
 
-  // World coordinate inputs
+  // In-game coordinate inputs (as shown on the Palworld HUD)
   const inputRow = el("div", { class: "calib-input-row" });
-  const wxLabel = el("label", { class: "calib-label" }, `World X:`);
-  const wxInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -63356" });
-  const wyLabel = el("label", { class: "calib-label" }, `World Y:`);
-  const wyInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -55026" });
+  const wxLabel = el("label", { class: "calib-label" }, `HUD X:`);
+  const wxInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -346" });
+  const wyLabel = el("label", { class: "calib-label" }, `HUD Y:`);
+  const wyInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -252" });
+  // Restore previously entered values (persist across 30s panel rebuilds)
+  if (calibState.inputX) wxInput.value = calibState.inputX;
+  if (calibState.inputY) wyInput.value = calibState.inputY;
+  wxInput.oninput = () => { calibState.inputX = wxInput.value; };
+  wyInput.oninput = () => { calibState.inputY = wyInput.value; };
   inputRow.appendChild(wxLabel); inputRow.appendChild(wxInput);
   inputRow.appendChild(wyLabel); inputRow.appendChild(wyInput);
   panelEl.appendChild(inputRow);
@@ -970,10 +987,11 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
   const setBtn = el("button", { class: "btn btn-primary btn-small" },
     step === 1 ? "Set Point 1 →" : "Set Point 2 →");
   setBtn.onclick = () => {
-    const worldX = parseFloat(wxInput.value);
-    const worldY = parseFloat(wyInput.value);
-    if (isNaN(worldX) || isNaN(worldY)) { alert("Enter valid world coordinates."); return; }
+    const displayX = parseFloat(wxInput.value);
+    const displayY = parseFloat(wyInput.value);
+    if (isNaN(displayX) || isNaN(displayY)) { alert("Enter valid in-game coordinates from the Palworld HUD."); return; }
     if (calibState.pendingFracX === null) { alert("Click a location on the map first."); return; }
+    const { rawX: worldX, rawY: worldY } = fromMapCoords(displayX, displayY);
     calibState.points.push({
       worldX, worldY,
       fracX: calibState.pendingFracX,
@@ -981,6 +999,8 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
     });
     calibState.pendingFracX = null;
     calibState.pendingFracY = null;
+    calibState.inputX = "";
+    calibState.inputY = "";
     renderDetailCanvas(s);
     if (calibState.points.length >= 2) {
       renderCalibSavePanel(panelEl, s, calibBtn, mapContainer);
@@ -1003,7 +1023,7 @@ function renderCalibSavePanel(panelEl, s, calibBtn, mapContainer) {
   [p1, p2].forEach((pt, i) => {
     const row = el("div", { class: "calib-confirmed-point" });
     row.style.borderLeftColor = CALIB_COLORS[i];
-    row.textContent = `P${i + 1}: world (${Math.round(pt.worldX)}, ${Math.round(pt.worldY)})  ·  map (${(pt.fracX * 100).toFixed(1)}%, ${(pt.fracY * 100).toFixed(1)}%)`;
+    row.textContent = `P${i + 1}: HUD (${toMapCoords(pt.worldX, pt.worldY)})  ·  map (${(pt.fracX * 100).toFixed(1)}%, ${(pt.fracY * 100).toFixed(1)}%)`;
     panelEl.appendChild(row);
   });
 
@@ -1038,6 +1058,8 @@ function renderCalibSavePanel(panelEl, s, calibBtn, mapContainer) {
     calibState.points = [];
     calibState.pendingFracX = null;
     calibState.pendingFracY = null;
+    calibState.inputX = "";
+    calibState.inputY = "";
     renderDetailCanvas(s);
     renderCalibPanel(panelEl, s, calibBtn, mapContainer);
   };
@@ -1101,7 +1123,7 @@ function buildDetailMap(root, s) {
         calibBtn.textContent = mapCalibration?.calibrated ? "Recalibrate" : "Calibrate Map";
         renderDetailCanvas(s);
       } else {
-        calibState = { step: 1, points: [], pendingFracX: null, pendingFracY: null, latestServer: s, refreshPanel: () => {} };
+        calibState = { step: 1, points: [], pendingFracX: null, pendingFracY: null, inputX: "", inputY: "", latestServer: s, refreshPanel: () => {} };
         mapContainer.style.cursor = "crosshair";
         calibBtn.textContent = "Cancel Calibration";
         calibPanelEl.style.display = "";
@@ -1269,37 +1291,41 @@ function renderDetailCanvas(s) {
   }
 
   // Draw live player dots with pulse ring
+  // vs = "visual scale": canvas pixels per 1 display pixel, accounting for both
+  // the natural-resolution upscale (ds) and the CSS zoom level (mapZoom).
+  // Dividing by mapZoom keeps dots/labels a constant visual size at all zoom levels.
+  const vs = ds / mapZoom;
   const pulseT = (Date.now() % 1600) / 1600; // 0→1, 1.6s period
   for (const p of s.players) {
     const color = playerColors[p.steamId] ?? DOT_COLORS[0];
     if (!p.locationX && !p.locationY) continue;
     const { cx, cy } = worldToCanvas(p.locationX, p.locationY);
 
-    // Expanding pulse ring
+    // Expanding pulse ring (zoom-invariant)
     ctx.save();
     ctx.globalAlpha = (1 - pulseT) * 0.65;
     ctx.beginPath();
-    ctx.arc(cx, cy, (5 + pulseT * 14) * ds, 0, Math.PI * 2);
+    ctx.arc(cx, cy, (5 + pulseT * 14) * vs, 0, Math.PI * 2);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2 * ds;
+    ctx.lineWidth = 2 * vs;
     ctx.stroke();
     ctx.restore();
 
-    // Solid dot
+    // Solid dot (zoom-invariant)
     ctx.beginPath();
-    ctx.arc(cx, cy, 5 * ds, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 5 * vs, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.shadowColor = color;
-    ctx.shadowBlur = 8 * ds;
+    ctx.shadowBlur = 8 * vs;
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Name label
-    ctx.font = `${Math.round(11 * ds)}px 'Noto Sans', sans-serif`;
+    // Name label (zoom-invariant)
+    ctx.font = `${Math.round(11 * vs)}px 'Noto Sans', sans-serif`;
     ctx.fillStyle = "#ffffff";
     ctx.shadowColor = "rgba(0,0,0,0.9)";
-    ctx.shadowBlur = 4 * ds;
-    ctx.fillText(p.name, cx + 8 * ds, cy + 4 * ds);
+    ctx.shadowBlur = 4 * vs;
+    ctx.fillText(p.name, cx + 8 * vs, cy + 4 * vs);
     ctx.shadowBlur = 0;
   }
 
