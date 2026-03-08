@@ -53,9 +53,11 @@ function toMapCoords(rawX, rawY) {
 // Inverse: in-game display coords (as shown on Palworld HUD) → raw UE4 API coords
 // displayX = first number shown (mx), displayY = second number shown (my)
 function fromMapCoords(displayX, displayY) {
+  // HUD X (displayX) = (locationY - OFFSET_Y) / SCALE → locationY = displayX * SCALE + OFFSET_Y (east-west → fracX/horizontal)
+  // HUD Y (displayY) = (locationX + OFFSET_X) / SCALE → locationX = displayY * SCALE - OFFSET_X (north-south → fracY/vertical)
   return {
-    rawX: displayY * MAP_COORD_SCALE - MAP_COORD_OFFSET_X,
-    rawY: displayX * MAP_COORD_SCALE + MAP_COORD_OFFSET_Y,
+    worldX: displayX * MAP_COORD_SCALE + MAP_COORD_OFFSET_Y, // = locationY (east-west, for fracX)
+    worldY: displayY * MAP_COORD_SCALE - MAP_COORD_OFFSET_X, // = locationX (north-south, for fracY)
   };
 }
 
@@ -991,7 +993,7 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
     const displayY = parseFloat(wyInput.value);
     if (isNaN(displayX) || isNaN(displayY)) { alert("Enter valid in-game coordinates from the Palworld HUD."); return; }
     if (calibState.pendingFracX === null) { alert("Click a location on the map first."); return; }
-    const { rawX: worldX, rawY: worldY } = fromMapCoords(displayX, displayY);
+    const { worldX, worldY } = fromMapCoords(displayX, displayY);
     calibState.points.push({
       worldX, worldY,
       fracX: calibState.pendingFracX,
@@ -1255,9 +1257,10 @@ function renderDetailCanvas(s) {
   const ds = natW / (detailMapImg.offsetWidth || natW);
 
   function worldToCanvas(wx, wy) {
+    // wx = locationX (north-south → vertical), wy = locationY (east-west → horizontal)
     return {
-      cx: (wx * scaleX + offsetX) * natW,
-      cy: (wy * scaleY + offsetY) * natH,
+      cx: (wy * scaleX + offsetX) * natW,
+      cy: (wx * scaleY + offsetY) * natH,
     };
   }
 

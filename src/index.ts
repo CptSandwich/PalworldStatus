@@ -806,11 +806,11 @@ app.get("/api/map-calibration", requireWhitelisted, (c) => {
   if (saved) return c.json({ ...saved, calibrated: true });
   // Derive affine transform from community-estimated world bounds
   const { worldMinX, worldMaxX, worldMinY, worldMaxY } = MAP_CALIBRATION;
-  const rangeX = worldMaxX - worldMinX;
-  const rangeY = worldMaxY - worldMinY;
+  const rangeX = worldMaxX - worldMinX; // locationX range (north-south → fracY/vertical)
+  const rangeY = worldMaxY - worldMinY; // locationY range (east-west  → fracX/horizontal)
   return c.json({
-    scaleX: 1 / rangeX, offsetX: -worldMinX / rangeX,
-    scaleY: 1 / rangeY, offsetY: -worldMinY / rangeY,
+    scaleX: 1 / rangeY, offsetX: -worldMinY / rangeY, // locationY (east-west) → fracX
+    scaleY: 1 / rangeX, offsetY: -worldMinX / rangeX, // locationX (north-south) → fracY
     calibrated: false,
   });
 });
