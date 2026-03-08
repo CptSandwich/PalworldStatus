@@ -88,9 +88,11 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST ?? "localhost";
 
 // In-memory tracking for grid-based location history
 // Key: `${containerId}:${steamId}` → last recorded grid position + world coords
-const lastGridPositions = new Map<string, { worldX: number; worldY: number; col: number; row: number }>();
-const CLOUD_RADIUS_CELLS     = 28;       // storage grid cells radius per point (~198m)
-const MAX_TELEPORT_WORLD_UNITS = 50_000; // skip interpolation if jump exceeds ~1.5× Jetragon max
+const lastGridPositions = new Map<string, { worldX: number; worldY: number; col: number; row: number; recentSpeeds: number[] }>();
+const CLOUD_RADIUS_CELLS       = 28;       // storage grid cells radius per point (~198m)
+const MAX_TELEPORT_WORLD_UNITS = 50_000;   // skip interpolation if jump exceeds ~1.5× Jetragon max
+const SPEED_JUMP_MULTIPLIER    = 4;        // current speed must be 4× rolling avg to suspect teleport
+const MIN_SPEED_TELEPORT       = 8_000;    // min distance (world units) to apply speed-continuity check
 
 // Cache of last known API-reported server names (populated when server is online)
 const apiNameCache = new Map<string, string>();
@@ -186,27 +188,37 @@ app.get("/api/status", requireWhitelisted, async (c) => {
             if (p.accountName) upsertPlayerAuth(p.userId, p.accountName);
 
             // Track location history (grid-based, with teleport detection + path interpolation)
-            if (p.location_x !== undefined && p.location_y !== undefined) {
-              const key = `${container.id}:${p.userId}`;
+            if (p.location_x !== undefined && p.location_y !== undefined && p.playerId) {
+              const key = `${container.id}:${p.playerId}`;
               const last = lastGridPositions.get(key);
               const { col: newCol, row: newRow } = worldToGridCoords(p.location_x, p.location_y);
 
+              // Compute distance regardless of grid-cell change (needed for speed history)
+              const dx   = last ? p.location_x - last.worldX : 0;
+              const dy   = last ? p.location_y - last.worldY : 0;
+              const dist = last ? Math.sqrt(dx * dx + dy * dy) : 0;
+
               if (!last || last.col !== newCol || last.row !== newRow) {
-                const grid = getLocationGrid(container.id, p.userId);
+                const grid = getLocationGrid(container.id, p.playerId);
                 if (!last) {
                   markGridPath(grid, newCol, newRow, newCol, newRow, CLOUD_RADIUS_CELLS);
                 } else {
-                  const dx = p.location_x - last.worldX;
-                  const dy = p.location_y - last.worldY;
-                  if (Math.sqrt(dx * dx + dy * dy) >= MAX_TELEPORT_WORLD_UNITS) {
+                  let isTeleport = dist >= MAX_TELEPORT_WORLD_UNITS;
+                  if (!isTeleport && dist >= MIN_SPEED_TELEPORT && last.recentSpeeds.length >= 2) {
+                    const avgSpeed = last.recentSpeeds.reduce((a, b) => a + b, 0) / last.recentSpeeds.length;
+                    if (avgSpeed > 0 && dist > SPEED_JUMP_MULTIPLIER * avgSpeed) isTeleport = true;
+                  }
+                  if (isTeleport) {
                     markGridPath(grid, newCol, newRow, newCol, newRow, CLOUD_RADIUS_CELLS);
                   } else {
                     markGridPath(grid, last.col, last.row, newCol, newRow, CLOUD_RADIUS_CELLS);
                   }
                 }
-                saveLocationGrid(container.id, p.userId, grid);
+                saveLocationGrid(container.id, p.playerId, p.userId, p.name, grid);
               }
-              lastGridPositions.set(key, { worldX: p.location_x, worldY: p.location_y, col: newCol, row: newRow });
+
+              const updatedSpeeds = last ? [...last.recentSpeeds.slice(-1), dist] : [];
+              lastGridPositions.set(key, { worldX: p.location_x, worldY: p.location_y, col: newCol, row: newRow, recentSpeeds: updatedSpeeds });
             }
           }
         }
@@ -225,6 +237,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         version: info?.version ?? null,
         players: (players ?? []).map((p) => ({
           steamId: p.userId,
+          playerId: p.playerId,
           name: p.name,
           level: p.level,
           locationX: p.location_x,
@@ -616,15 +629,15 @@ app.get("/api/containers/:id/chat-log", requireWhitelisted, (c) => {
 // ── Location history ──────────────────────────────────────────────────────────
 
 app.get("/api/containers/:id/location-history", requireWhitelisted, (c) => {
-  const containerId = c.req.param("id");
-  const grids = getAllLocationGrids(containerId);
-  const nameMap = new Map(getAllPlayers().map(p => [p.steam_id, p.character_name ?? null]));
-  const players = grids.map(g => ({
-    steamId:       g.steamId,
-    characterName: nameMap.get(g.steamId) ?? null,
-    gridData:      Buffer.from(g.gridData).toString("base64"),
-  }));
-  return c.json({ players });
+  const grids = getAllLocationGrids(c.req.param("id"));
+  return c.json({
+    players: grids.map(g => ({
+      playerId:      g.playerId,
+      steamId:       g.steamId,
+      characterName: g.characterName,
+      gridData:      Buffer.from(g.gridData).toString("base64"),
+    })),
+  });
 });
 
 // ── Player management (admin only) ────────────────────────────────────────────

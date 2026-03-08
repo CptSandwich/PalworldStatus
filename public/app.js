@@ -6,6 +6,7 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let currentUser = null;
+let viewAsWhitelisted = false;
 let mapCalibration = null;
 let lastStatus = null;
 let pollTimer = null;
@@ -14,7 +15,7 @@ const POLL_INTERVAL_MS = 10_000;
 // Detail page state
 let detailContainerId = null;
 let detailHistoryEnabled = false;
-let detailHiddenPlayers = new Set(); // steamIds hidden in history view
+let detailHiddenPlayers = new Set(); // playerIds hidden in history view
 let detailHistoryData = null;        // cached history response
 let detailKnownPlayers = null;       // known_players for current container
 let detailExpandedPlayers = new Set(); // steamIds with expanded rows
@@ -28,7 +29,7 @@ let mapEventCleanup = null;          // fn to remove window drag listeners
 let calibState = null;               // null | { step, points[], pendingFracX, pendingFracY }
 let detailFullyRendered = false;     // true after first detail page render; resets on navigation
 let detailDotsOverlay = null;        // <div> overlay for player dots (outside zoom/pan inner)
-const playerColorMap = {};           // steamId → color string (persists across renders)
+const playerColorMap = {};           // playerId → color string (persists across renders)
 let savedCronValues = new Map();     // preserves unsaved cron text across landing page polls
 
 // Player dot colours (cycle through palette)
@@ -144,7 +145,7 @@ function renderAuth() {
     return;
   }
 
-  html.dataset.role = currentUser.role;
+  html.dataset.role = currentUser.role === "admin" && viewAsWhitelisted ? "whitelisted" : currentUser.role;
   authMsg.textContent = "";
   steamLink.style.display = "none";
   logoutBtn.style.display = "none";
@@ -153,11 +154,18 @@ function renderAuth() {
     <img class="header-avatar" src="${escHtml(currentUser.avatarUrl)}" alt="" />
     <span class="header-name">${escHtml(currentUser.displayName)}</span>
     ${currentUser.role === "admin"
-      ? '<span style="font-size:11px;color:var(--accent-purple);font-family:var(--font-mono)">[admin]</span>'
+      ? `<button class="btn btn-small" id="role-toggle-btn" style="font-size:11px;font-family:var(--font-mono);color:${viewAsWhitelisted ? "var(--text-muted)" : "var(--accent-purple)"}">${viewAsWhitelisted ? "[user view]" : "[admin]"}</button>`
       : ""}
     <button class="btn btn-secondary btn-small" id="header-logout-btn">Logout</button>
   `;
   document.getElementById("header-logout-btn").onclick = doLogout;
+  if (currentUser.role === "admin") {
+    document.getElementById("role-toggle-btn").onclick = () => {
+      viewAsWhitelisted = !viewAsWhitelisted;
+      renderAuth();
+      renderCurrentView();
+    };
+  }
 }
 
 async function doLogout() {
@@ -1092,10 +1100,10 @@ function buildDetailMap(root, s) {
   // History toggle button
   const histBtn = el("button", {
     class: `btn btn-small btn-purple`,
-  }, detailHistoryEnabled ? "Hide History" : "Show History");
+  }, detailHistoryEnabled ? "Hide Exploration" : "Show Exploration");
   histBtn.onclick = async () => {
     detailHistoryEnabled = !detailHistoryEnabled;
-    histBtn.textContent = detailHistoryEnabled ? "Hide History" : "Show History";
+    histBtn.textContent = detailHistoryEnabled ? "Hide Exploration" : "Show Exploration";
     if (detailHistoryEnabled && !detailHistoryData) {
       try {
         const res = await fetch(`/api/containers/${encodeURIComponent(s.id)}/location-history`);
@@ -1103,6 +1111,7 @@ function buildDetailMap(root, s) {
           const data = await res.json();
           detailHistoryData = {
             players: data.players.map(p => ({
+              playerId:      p.playerId,
               steamId:       p.steamId,
               characterName: p.characterName,
               polygons: p.gridData
@@ -1150,7 +1159,7 @@ function buildDetailMap(root, s) {
           } else {
             renderCalibPanel(calibPanelEl, calibState.latestServer, calibBtn, mapContainer);
           }
-          updateDotsOverlay(calibState.latestServer);
+          requestAnimationFrame(() => { if (calibState) updateDotsOverlay(calibState.latestServer); });
         };
       }
     };
@@ -1367,10 +1376,11 @@ function updateDotsOverlay(s) {
     const fracY = p.locationX * scaleY + offsetY;
     const sx = fracX * imgW * mapZoom + mapPanX;
     const sy = fracY * imgH * mapZoom + mapPanY;
-    if (!playerColorMap[p.steamId]) {
-      playerColorMap[p.steamId] = DOT_COLORS[Object.keys(playerColorMap).length % DOT_COLORS.length];
+    const dotKey = p.playerId || p.steamId;
+    if (!playerColorMap[dotKey]) {
+      playerColorMap[dotKey] = DOT_COLORS[Object.keys(playerColorMap).length % DOT_COLORS.length];
     }
-    const color = playerColorMap[p.steamId];
+    const color = playerColorMap[dotKey];
     const wrap = el("div", { class: "player-dot-wrap" });
     wrap.style.left = sx + "px";
     wrap.style.top = sy + "px";
@@ -1446,8 +1456,8 @@ function renderDetailCanvas(s) {
     ctx.globalAlpha = 0.65;
     ctx.filter = `blur(${Math.round(3 * ds)}px)`;
     for (const ph of detailHistoryData.players) {
-      if (detailHiddenPlayers.has(ph.steamId) || !ph.polygons?.length) continue;
-      ctx.fillStyle = playerColorMap[ph.steamId] ?? DOT_COLORS[0];
+      if (detailHiddenPlayers.has(ph.playerId) || !ph.polygons?.length) continue;
+      ctx.fillStyle = playerColorMap[ph.playerId] ?? DOT_COLORS[0];
       for (const poly of ph.polygons) {
         ctx.beginPath();
         ctx.moveTo(poly[0][0] * cellW, poly[0][1] * cellH);
@@ -1506,34 +1516,39 @@ function renderHistoryLegend(legendEl, s) {
   }
   legendEl.style.display = "";
 
-  let colorIdx = 0;
-  const allPlayers = new Map();
-  // Combine live + history players
-  for (const p of s.players) {
-    allPlayers.set(p.steamId, p.name);
-  }
+  // Build a unified player map keyed by playerId (or steamId fallback for live-only players)
+  // Entry: [id, { name, isLive }]
+  const allPlayers = new Map(); // id → { name, id }
   if (detailHistoryData) {
     for (const ph of detailHistoryData.players) {
-      if (!allPlayers.has(ph.steamId)) {
-        allPlayers.set(ph.steamId, ph.characterName ?? ph.steamId);
-      }
+      allPlayers.set(ph.playerId, { name: ph.characterName ?? ph.steamId, id: ph.playerId });
+    }
+  }
+  // Live players: use playerId if available; fall back to steamId for dedup
+  for (const p of s.players) {
+    const id = p.playerId || p.steamId;
+    if (!allPlayers.has(id)) {
+      allPlayers.set(id, { name: p.name, id });
     }
   }
 
-  for (const [steamId, name] of allPlayers) {
-    const color = DOT_COLORS[colorIdx++ % DOT_COLORS.length];
+  for (const [pid, { name }] of allPlayers) {
+    if (!playerColorMap[pid]) {
+      playerColorMap[pid] = DOT_COLORS[Object.keys(playerColorMap).length % DOT_COLORS.length];
+    }
+    const color = playerColorMap[pid];
     const item = el("div", {
-      class: `history-legend-item ${detailHiddenPlayers.has(steamId) ? "hidden" : ""}`,
+      class: `history-legend-item ${detailHiddenPlayers.has(pid) ? "hidden" : ""}`,
     });
     const dot = el("span", { class: "history-legend-dot", style: `background:${color}` });
     item.appendChild(dot);
     item.appendChild(document.createTextNode(name));
     item.onclick = () => {
-      if (detailHiddenPlayers.has(steamId)) {
-        detailHiddenPlayers.delete(steamId);
+      if (detailHiddenPlayers.has(pid)) {
+        detailHiddenPlayers.delete(pid);
         item.classList.remove("hidden");
       } else {
-        detailHiddenPlayers.add(steamId);
+        detailHiddenPlayers.add(pid);
         item.classList.add("hidden");
       }
       renderDetailCanvas(s);

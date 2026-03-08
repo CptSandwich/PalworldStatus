@@ -3,8 +3,10 @@ import { mkdirSync } from "fs";
 import { dirname } from "path";
 
 const DB_PATH = process.env.DB_PATH ?? "/app/data/palworld-status.db";
+const LOCATION_DB_PATH = process.env.LOCATION_DB_PATH ?? "/app/data/palworld-location.db";
 
 let db: Database;
+let locationDb: Database;
 
 export function getDb(): Database {
   if (!db) {
@@ -15,6 +17,29 @@ export function getDb(): Database {
     initSchema();
   }
   return db;
+}
+
+export function getLocationDb(): Database {
+  if (!locationDb) {
+    mkdirSync(dirname(LOCATION_DB_PATH), { recursive: true });
+    locationDb = new Database(LOCATION_DB_PATH, { create: true });
+    locationDb.run("PRAGMA journal_mode = WAL");
+    initLocationSchema();
+  }
+  return locationDb;
+}
+
+function initLocationSchema() {
+  locationDb.run(`
+    CREATE TABLE IF NOT EXISTS location_grid (
+      container_id   TEXT NOT NULL,
+      player_id      TEXT NOT NULL,
+      steam_id       TEXT,
+      character_name TEXT,
+      grid_data      BLOB NOT NULL,
+      PRIMARY KEY (container_id, player_id)
+    )
+  `);
 }
 
 function initSchema() {
@@ -88,14 +113,6 @@ function initSchema() {
       ON chat_log(container_id, id DESC)
   `);
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS location_grid (
-      container_id TEXT NOT NULL,
-      steam_id     TEXT NOT NULL,
-      grid_data    BLOB NOT NULL,
-      PRIMARY KEY (container_id, steam_id)
-    )
-  `);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS map_calibration (
@@ -432,27 +449,37 @@ export function markGridPath(
   }
 }
 
-export function getLocationGrid(containerId: string, steamId: string): Uint8Array {
-  const row = getDb()
-    .query(`SELECT grid_data FROM location_grid WHERE container_id = ? AND steam_id = ?`)
-    .get(containerId, steamId) as { grid_data: Buffer } | null;
+export function getLocationGrid(containerId: string, playerId: string): Uint8Array {
+  const row = getLocationDb()
+    .query(`SELECT grid_data FROM location_grid WHERE container_id = ? AND player_id = ?`)
+    .get(containerId, playerId) as { grid_data: Buffer } | null;
   if (!row?.grid_data) return new Uint8Array(GRID_BYTES);
   return new Uint8Array(row.grid_data.buffer, row.grid_data.byteOffset, row.grid_data.byteLength);
 }
 
-export function saveLocationGrid(containerId: string, steamId: string, grid: Uint8Array): void {
-  getDb().run(
-    `INSERT INTO location_grid (container_id, steam_id, grid_data) VALUES (?, ?, ?)
-     ON CONFLICT(container_id, steam_id) DO UPDATE SET grid_data = excluded.grid_data`,
-    [containerId, steamId, grid]
+export function saveLocationGrid(
+  containerId: string, playerId: string,
+  steamId: string, characterName: string,
+  grid: Uint8Array
+): void {
+  getLocationDb().run(
+    `INSERT INTO location_grid (container_id, player_id, steam_id, character_name, grid_data)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(container_id, player_id) DO UPDATE SET
+       steam_id = excluded.steam_id,
+       character_name = excluded.character_name,
+       grid_data = excluded.grid_data`,
+    [containerId, playerId, steamId, characterName, grid]
   );
 }
 
-export function getAllLocationGrids(containerId: string): { steamId: string; gridData: Buffer }[] {
-  const rows = getDb()
-    .query(`SELECT steam_id, grid_data FROM location_grid WHERE container_id = ?`)
-    .all(containerId) as { steam_id: string; grid_data: Buffer }[];
-  return rows.map(r => ({ steamId: r.steam_id, gridData: r.grid_data }));
+export function getAllLocationGrids(containerId: string): {
+  playerId: string; steamId: string; characterName: string | null; gridData: Buffer
+}[] {
+  const rows = getLocationDb()
+    .query(`SELECT player_id, steam_id, character_name, grid_data FROM location_grid WHERE container_id = ?`)
+    .all(containerId) as { player_id: string; steam_id: string; character_name: string | null; grid_data: Buffer }[];
+  return rows.map(r => ({ playerId: r.player_id, steamId: r.steam_id, characterName: r.character_name, gridData: r.grid_data }));
 }
 
 // ── Map calibration ────────────────────────────────────────────────────────────
