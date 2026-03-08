@@ -741,18 +741,6 @@ app.delete("/api/map-calibration", requireAdmin, (c) => {
 
 // ── Static files ──────────────────────────────────────────────────────────────
 
-// Icons live in the project root, not public/ — serve directly via Bun.file()
-app.get("/favicon.ico", (c) =>
-  new Response(Bun.file("./PalworldStatus.ico"), {
-    headers: { "Content-Type": "image/x-icon", "Cache-Control": "public, max-age=86400" },
-  })
-);
-app.get("/favicon.png", (c) =>
-  new Response(Bun.file("./PalworldStatusIcon.png"), {
-    headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
-  })
-);
-
 app.use("/*", serveStatic({ root: "./public" }));
 
 // Fallback: serve index.html for any unmatched route (SPA)
