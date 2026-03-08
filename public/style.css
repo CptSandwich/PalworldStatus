@@ -670,6 +670,104 @@ a:hover { color: var(--accent-hover); }
   pointer-events: none;
 }
 
+.map-dots-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+}
+
+.player-dot-wrap {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.player-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  position: relative;
+  z-index: 1;
+}
+
+.player-dot-pulse {
+  position: absolute;
+  top: 0; left: 0;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--dot-color, #3ecfcf);
+  animation: dot-pulse 1.6s ease-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%   { transform: scale(1);   opacity: 0.65; }
+  100% { transform: scale(3.8); opacity: 0; }
+}
+
+.player-dot-label {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  line-height: 10px;
+  font-size: 11px;
+  font-family: 'Noto Sans', sans-serif;
+  white-space: nowrap;
+  color: #fff;
+  text-shadow: 0 1px 3px #000, 0 0 6px #000;
+  background: rgba(0, 0, 0, 0.50);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.calib-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.calib-circle {
+  position: absolute;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--calib-color, #ff4444);
+  background: color-mix(in srgb, var(--calib-color, #ff4444) 15%, transparent);
+  top: -9px; left: -9px;
+}
+
+.calib-circle-pending {
+  border-style: dashed;
+  background: transparent;
+}
+
+.calib-h-line {
+  position: absolute;
+  height: 1.5px; width: 28px;
+  background: var(--calib-color, #ff4444);
+  top: -0.75px; left: -14px;
+  filter: drop-shadow(0 0 2px #000);
+}
+
+.calib-v-line {
+  position: absolute;
+  width: 1.5px; height: 28px;
+  background: var(--calib-color, #ff4444);
+  top: -14px; left: -0.75px;
+  filter: drop-shadow(0 0 2px #000);
+}
+
+.calib-label {
+  position: absolute;
+  left: 11px; top: -17px;
+  font-size: 11px;
+  font-weight: bold;
+  font-family: 'Noto Sans', sans-serif;
+  color: var(--calib-color, #ff4444);
+  text-shadow: 0 1px 3px #000, 0 0 6px #000;
+  white-space: nowrap;
+}
+
 .map-controls {
   display: flex;
   align-items: center;

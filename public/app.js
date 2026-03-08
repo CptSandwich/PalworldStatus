@@ -27,8 +27,8 @@ let mapPanY = 0;
 let mapEventCleanup = null;          // fn to remove window drag listeners
 let calibState = null;               // null | { step, points[], pendingFracX, pendingFracY }
 let detailFullyRendered = false;     // true after first detail page render; resets on navigation
-let canvasAnimId = null;             // requestAnimationFrame handle for canvas pulse loop
-let canvasFrameLastTs = 0;           // timestamp of last canvas render (for fps throttle)
+let detailDotsOverlay = null;        // <div> overlay for player dots (outside zoom/pan inner)
+const playerColorMap = {};           // steamId → color string (persists across renders)
 let savedCronValues = new Map();     // preserves unsaved cron text across landing page polls
 
 // Player dot colours (cycle through palette)
@@ -185,13 +185,13 @@ function onHashChange() {
     detailMapImg = null;
     detailCanvas = null;
     detailMapInner = null;
+    detailDotsOverlay = null;
     mapZoom = 1; mapPanX = 0; mapPanY = 0;
     calibState = null;
     detailFullyRendered = false;
     if (mapEventCleanup) { mapEventCleanup(); mapEventCleanup = null; }
   } else {
     detailContainerId = null;
-    if (canvasAnimId) { cancelAnimationFrame(canvasAnimId); canvasAnimId = null; }
   }
   renderCurrentView();
 }
@@ -486,6 +486,7 @@ async function renderDetailPage(s) {
       calibState.refreshPanel();
     }
     renderDetailCanvas(s);
+    updateDotsOverlay(s);
     void refreshChatLog(s.id);
     return;
   }
@@ -910,6 +911,10 @@ function buildBroadcastPanel(root, s) {
 function applyMapTransform() {
   if (!detailMapInner) return;
   detailMapInner.style.transform = `translate(${mapPanX}px, ${mapPanY}px) scale(${mapZoom})`;
+  if (lastStatus && detailContainerId) {
+    const s = lastStatus.find(sv => sv.serverId === detailContainerId);
+    if (s) updateDotsOverlay(s);
+  }
 }
 
 function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
@@ -1004,11 +1009,7 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
     calibState.inputX = "";
     calibState.inputY = "";
     renderDetailCanvas(s);
-    if (calibState.points.length >= 2) {
-      renderCalibSavePanel(panelEl, s, calibBtn, mapContainer);
-    } else {
-      renderCalibPanel(panelEl, s, calibBtn, mapContainer);
-    }
+    calibState.refreshPanel();
   };
   btnRow.appendChild(setBtn);
   panelEl.appendChild(btnRow);
@@ -1124,13 +1125,22 @@ function buildDetailMap(root, s) {
         calibPanelEl.style.display = "none";
         calibBtn.textContent = mapCalibration?.calibrated ? "Recalibrate" : "Calibrate Map";
         renderDetailCanvas(s);
+        updateDotsOverlay(s);
       } else {
         calibState = { step: 1, points: [], pendingFracX: null, pendingFracY: null, inputX: "", inputY: "", latestServer: s, refreshPanel: () => {} };
         mapContainer.style.cursor = "crosshair";
         calibBtn.textContent = "Cancel Calibration";
         calibPanelEl.style.display = "";
         renderCalibPanel(calibPanelEl, s, calibBtn, mapContainer);
-        calibState.refreshPanel = () => renderCalibPanel(calibPanelEl, calibState.latestServer, calibBtn, mapContainer);
+        calibState.refreshPanel = () => {
+          if (!calibState) return;
+          if (calibState.points.length >= 2) {
+            renderCalibSavePanel(calibPanelEl, calibState.latestServer, calibBtn, mapContainer);
+          } else {
+            renderCalibPanel(calibPanelEl, calibState.latestServer, calibBtn, mapContainer);
+          }
+          updateDotsOverlay(calibState.latestServer);
+        };
       }
     };
     sectionHeader.appendChild(calibBtn);
@@ -1141,9 +1151,12 @@ function buildDetailMap(root, s) {
   const inner = el("div", { class: "map-inner" });
   const mapImg = el("img", { class: "map-img", src: "/palworld-map.webp", alt: "Palworld World Map" });
   const canvas = el("canvas", { class: "map-canvas" });
+  const dotsOverlay = el("div", { class: "map-dots-overlay" });
   inner.appendChild(mapImg);
   inner.appendChild(canvas);
   mapContainer.appendChild(inner);
+  mapContainer.appendChild(dotsOverlay);
+  detailDotsOverlay = dotsOverlay;
   section.appendChild(mapContainer);
 
   // Calibration panel (admin only, initially hidden)
@@ -1205,6 +1218,7 @@ function buildDetailMap(root, s) {
         calibState.pendingFracX = cx / detailMapImg.offsetWidth;
         calibState.pendingFracY = cy / detailMapImg.offsetHeight;
         renderDetailCanvas(s);
+        updateDotsOverlay(s);
         calibState.refreshPanel();
       }
     }
@@ -1218,22 +1232,71 @@ function buildDetailMap(root, s) {
     window.removeEventListener("mouseup", onMouseUp);
   };
 
-  mapImg.onload = () => renderDetailCanvas(s);
-  window.addEventListener("resize", () => renderDetailCanvas(
-    lastStatus?.find(sv => sv.serverId === detailContainerId) ?? s), { once: false });
-
-  // Start pulse animation loop (throttled to ~24fps)
-  if (canvasAnimId) cancelAnimationFrame(canvasAnimId);
-  canvasFrameLastTs = 0;
-  function canvasFrame(ts) {
-    if (!detailContainerId || !detailCanvas) { canvasAnimId = null; return; }
-    canvasAnimId = requestAnimationFrame(canvasFrame);
-    if (ts - canvasFrameLastTs < 42) return; // ~24fps
-    canvasFrameLastTs = ts;
+  mapImg.onload = () => { renderDetailCanvas(s); updateDotsOverlay(s); };
+  window.addEventListener("resize", () => {
     const server = lastStatus?.find(sv => sv.serverId === detailContainerId) ?? s;
     renderDetailCanvas(server);
+    updateDotsOverlay(server);
+  }, { once: false });
+
+  renderDetailCanvas(s);
+  updateDotsOverlay(s);
+}
+
+function updateDotsOverlay(s) {
+  if (!detailDotsOverlay || !mapCalibration || !detailMapImg) return;
+  const { scaleX, offsetX, scaleY, offsetY } = mapCalibration;
+  const imgW = detailMapImg.offsetWidth;
+  const imgH = detailMapImg.offsetHeight;
+  detailDotsOverlay.innerHTML = "";
+  for (const p of s.players) {
+    if (!p.locationX && !p.locationY) continue;
+    // Same axis convention as worldToCanvas: locationY → horizontal, locationX → vertical
+    const fracX = p.locationY * scaleX + offsetX;
+    const fracY = p.locationX * scaleY + offsetY;
+    const sx = fracX * imgW * mapZoom + mapPanX;
+    const sy = fracY * imgH * mapZoom + mapPanY;
+    if (!playerColorMap[p.steamId]) {
+      playerColorMap[p.steamId] = DOT_COLORS[Object.keys(playerColorMap).length % DOT_COLORS.length];
+    }
+    const color = playerColorMap[p.steamId];
+    const wrap = el("div", { class: "player-dot-wrap" });
+    wrap.style.left = sx + "px";
+    wrap.style.top = sy + "px";
+    const pulse = el("div", { class: "player-dot-pulse" });
+    pulse.style.setProperty("--dot-color", color);
+    const dot = el("div", { class: "player-dot" });
+    dot.style.background = color;
+    dot.style.boxShadow = `0 0 8px ${color}`;
+    const label = el("div", { class: "player-dot-label" }, p.name || p.steamId.slice(-6));
+    wrap.appendChild(pulse);
+    wrap.appendChild(dot);
+    wrap.appendChild(label);
+    detailDotsOverlay.appendChild(wrap);
   }
-  canvasAnimId = requestAnimationFrame(canvasFrame);
+
+  // Calibration markers (zoom-invariant — in overlay, not canvas)
+  if (calibState) {
+    const CALIB_COLORS = ["#ff4444", "#ff8800"];
+    const addCalibMarker = (fracX, fracY, color, label, pending) => {
+      const sx = fracX * imgW * mapZoom + mapPanX;
+      const sy = fracY * imgH * mapZoom + mapPanY;
+      const marker = el("div", { class: "calib-marker" });
+      marker.style.left = sx + "px";
+      marker.style.top = sy + "px";
+      marker.style.setProperty("--calib-color", color);
+      marker.appendChild(el("div", { class: pending ? "calib-circle calib-circle-pending" : "calib-circle" }));
+      marker.appendChild(el("div", { class: "calib-h-line" }));
+      marker.appendChild(el("div", { class: "calib-v-line" }));
+      if (label) marker.appendChild(el("div", { class: "calib-label" }, label));
+      detailDotsOverlay.appendChild(marker);
+    };
+    calibState.points.forEach((pt, i) =>
+      addCalibMarker(pt.fracX, pt.fracY, CALIB_COLORS[i], `P${i + 1}`, false));
+    if (calibState.pendingFracX !== null)
+      addCalibMarker(calibState.pendingFracX, calibState.pendingFracY,
+        CALIB_COLORS[calibState.points.length] ?? "#ffffff", null, true);
+  }
 }
 
 function renderDetailCanvas(s) {
@@ -1264,23 +1327,14 @@ function renderDetailCanvas(s) {
     };
   }
 
-  // Build player → color map (consistent across renders)
-  const playerColors = {};
-  let colorIdx = 0;
-  for (const p of s.players) {
-    if (!playerColors[p.steamId]) {
-      playerColors[p.steamId] = DOT_COLORS[colorIdx++ % DOT_COLORS.length];
-    }
-  }
-
   // Draw exploration fog — semi-transparent filled circles with minimal blur
   if (detailHistoryEnabled && detailHistoryData) {
     ctx.save();
     ctx.filter = `blur(${Math.round(3 * ds)}px)`;
-    ctx.globalAlpha = 0.90;
+    ctx.globalAlpha = 0.65;
     for (const ph of detailHistoryData.players) {
       if (detailHiddenPlayers.has(ph.steamId)) continue;
-      const color = playerColors[ph.steamId] ?? DOT_COLORS[0];
+      const color = playerColorMap[ph.steamId] ?? DOT_COLORS[0];
       ctx.fillStyle = color;
       for (const pt of ph.points) {
         const { cx, cy } = worldToCanvas(pt.x, pt.y);
@@ -1291,45 +1345,6 @@ function renderDetailCanvas(s) {
     }
     ctx.restore();
     ctx.filter = "none"; // explicit reset — belt-and-suspenders for browser compat
-  }
-
-  // Draw live player dots with pulse ring
-  // vs = "visual scale": canvas pixels per 1 display pixel, accounting for both
-  // the natural-resolution upscale (ds) and the CSS zoom level (mapZoom).
-  // Dividing by mapZoom keeps dots/labels a constant visual size at all zoom levels.
-  const vs = ds / mapZoom;
-  const pulseT = (Date.now() % 1600) / 1600; // 0→1, 1.6s period
-  for (const p of s.players) {
-    const color = playerColors[p.steamId] ?? DOT_COLORS[0];
-    if (!p.locationX && !p.locationY) continue;
-    const { cx, cy } = worldToCanvas(p.locationX, p.locationY);
-
-    // Expanding pulse ring (zoom-invariant)
-    ctx.save();
-    ctx.globalAlpha = (1 - pulseT) * 0.65;
-    ctx.beginPath();
-    ctx.arc(cx, cy, (5 + pulseT * 14) * vs, 0, Math.PI * 2);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2 * vs;
-    ctx.stroke();
-    ctx.restore();
-
-    // Solid dot (zoom-invariant)
-    ctx.beginPath();
-    ctx.arc(cx, cy, 5 * vs, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 8 * vs;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-
-    // Name label (zoom-invariant)
-    ctx.font = `${Math.round(11 * vs)}px 'Noto Sans', sans-serif`;
-    ctx.fillStyle = "#ffffff";
-    ctx.shadowColor = "rgba(0,0,0,0.9)";
-    ctx.shadowBlur = 4 * vs;
-    ctx.fillText(p.name, cx + 8 * vs, cy + 4 * vs);
-    ctx.shadowBlur = 0;
   }
 
   // Calibration exclusion mask (step 2: darken area near Point 1)
@@ -1368,52 +1383,6 @@ function renderDetailCanvas(s) {
     ctx.restore();
   }
 
-  // Calibration markers
-  if (calibState) {
-    const CALIB_COLORS = ["#ff4444", "#ff8800"];
-
-    calibState.points.forEach((pt, i) => {
-      const px = pt.fracX * natW;
-      const py = pt.fracY * natH;
-      const col = CALIB_COLORS[i];
-      ctx.beginPath();
-      ctx.arc(px, py, 9 * ds, 0, Math.PI * 2);
-      ctx.fillStyle = col + "33";
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 2 * ds;
-      ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(px - 14 * ds, py); ctx.lineTo(px + 14 * ds, py);
-      ctx.moveTo(px, py - 14 * ds); ctx.lineTo(px, py + 14 * ds);
-      ctx.strokeStyle = col; ctx.lineWidth = 1.5 * ds;
-      ctx.stroke();
-      ctx.font = `bold ${Math.round(11 * ds)}px 'Noto Sans', sans-serif`;
-      ctx.fillStyle = col;
-      ctx.textAlign = "left";
-      ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 4 * ds;
-      ctx.fillText(`P${i + 1}`, px + 11 * ds, py - 9 * ds);
-      ctx.shadowBlur = 0;
-    });
-
-    if (calibState.pendingFracX !== null) {
-      const i = calibState.points.length;
-      const px = calibState.pendingFracX * natW;
-      const py = calibState.pendingFracY * natH;
-      const col = CALIB_COLORS[i] ?? "#ffffff";
-      ctx.beginPath();
-      ctx.arc(px, py, 9 * ds, 0, Math.PI * 2);
-      ctx.setLineDash([4 * ds, 4 * ds]);
-      ctx.strokeStyle = col; ctx.lineWidth = 2 * ds;
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.moveTo(px - 14 * ds, py); ctx.lineTo(px + 14 * ds, py);
-      ctx.moveTo(px, py - 14 * ds); ctx.lineTo(px, py + 14 * ds);
-      ctx.strokeStyle = col; ctx.lineWidth = 1.5 * ds;
-      ctx.stroke();
-    }
-  }
 }
 
 function renderHistoryLegend(legendEl, s) {
