@@ -115,6 +115,10 @@ async function fetchStatus() {
   } catch { return null; }
 }
 
+function isAdmin() {
+  return currentUser?.role === "admin" && !viewAsWhitelisted;
+}
+
 // ── Auth rendering ────────────────────────────────────────────────────────────
 
 function renderAuth() {
@@ -252,7 +256,7 @@ function renderLandingPage() {
 
     // Refresh data-only sections (they target their own elements)
     fetchAndRenderAuditLog();
-    if (currentUser?.role === "admin") {
+    if (isAdmin()) {
       fetchAndRenderPlayers();
       fetchAndRenderSchedules();
     }
@@ -300,7 +304,7 @@ function renderLandingPage() {
   fetchAndRenderAuditLog();
 
   // Admin: player management + restart schedules
-  if (currentUser?.role === "admin") {
+  if (isAdmin()) {
     const pmSection = el("section", { class: "admin-section", id: "player-management" });
     const pmHeader = el("div", { class: "section-header" });
     pmHeader.appendChild(el("h2", { class: "section-title" }, "Player Management"));
@@ -436,12 +440,12 @@ function buildServerCard(s) {
 
   // Footer actions
   const footer = el("div", { class: "server-card-footer" });
-  const isAdmin = currentUser?.role === "admin";
+  const _isAdmin = isAdmin();
   if (gameStatus === "online" || gameStatus === "crashed" || gameStatus === "starting") {
     const restartBtn = el("button", { class: "btn btn-small" }, "↺ Restart");
     restartBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "restart", s.name, restartBtn); };
     footer.appendChild(restartBtn);
-    if (isAdmin) {
+    if (_isAdmin) {
       const stopBtn = el("button", { class: "btn btn-small btn-danger" }, "■ Stop");
       stopBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "stop", s.name, stopBtn); };
       footer.appendChild(stopBtn);
@@ -451,7 +455,7 @@ function buildServerCard(s) {
     startBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "start", s.name, startBtn); };
     footer.appendChild(startBtn);
   }
-  if (isAdmin && s.containerName) {
+  if (_isAdmin && s.containerName) {
     footer.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
   }
   if (footer.children.length > 0) card.appendChild(footer);
@@ -514,7 +518,7 @@ async function renderDetailPage(s) {
     style: `background:var(--status-${gameStatus});box-shadow:0 0 7px var(--status-${gameStatus})`,
   }));
   hdr.appendChild(el("span", { class: "detail-server-name" }, s.name));
-  if (currentUser?.role === "admin" && s.containerName) {
+  if (isAdmin() && s.containerName) {
     hdr.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
   }
   hdr.appendChild(el("span", {
@@ -663,7 +667,7 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
         header.appendChild(expandBtn);
 
         // Admin actions
-        if (currentUser?.role === "admin") {
+        if (isAdmin()) {
           const actionsEl = el("div", { class: "player-actions" });
           const isBanned = knownData?.game_banned === 1;
           if (isBanned) {
@@ -734,12 +738,12 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
   }
 
   // Action panels
-  if (currentUser?.role === "admin") {
+  if (isAdmin()) {
     buildTimedActionPanel(dyn, s);
-  } else if (currentUser?.role === "whitelisted") {
+  } else if (currentUser?.role === "whitelisted" || (currentUser?.role === "admin" && viewAsWhitelisted)) {
     buildWhitelistedRestartPanel(dyn, s, gameStatus);
   }
-  if (currentUser?.role === "admin" && gameStatus === "online") {
+  if (isAdmin() && gameStatus === "online") {
     buildBroadcastPanel(dyn, s);
   }
 }
@@ -1135,7 +1139,7 @@ function buildDetailMap(root, s) {
 
   // Calibrate button (admin only)
   let calibPanelEl = null;
-  if (currentUser?.role === "admin") {
+  if (isAdmin()) {
     const calibBtn = el("button", { class: "btn btn-small btn-secondary" },
       mapCalibration?.calibrated ? "Recalibrate" : "Calibrate Map");
     calibBtn.onclick = () => {
@@ -1180,7 +1184,7 @@ function buildDetailMap(root, s) {
   section.appendChild(mapContainer);
 
   // Calibration panel (admin only, initially hidden)
-  if (currentUser?.role === "admin") {
+  if (isAdmin()) {
     calibPanelEl = el("div", { class: "calib-panel", style: "display:none" });
     section.appendChild(calibPanelEl);
   }
