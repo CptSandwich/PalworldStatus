@@ -89,20 +89,12 @@ function initSchema() {
   `);
 
   db.run(`
-    CREATE TABLE IF NOT EXISTS player_location_history (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      container_id   TEXT NOT NULL,
-      steam_id       TEXT NOT NULL,
-      character_name TEXT,
-      x              REAL NOT NULL,
-      y              REAL NOT NULL,
-      timestamp      TEXT NOT NULL DEFAULT (datetime('now'))
+    CREATE TABLE IF NOT EXISTS location_grid (
+      container_id TEXT NOT NULL,
+      steam_id     TEXT NOT NULL,
+      grid_data    BLOB NOT NULL,
+      PRIMARY KEY (container_id, steam_id)
     )
-  `);
-
-  db.run(`
-    CREATE INDEX IF NOT EXISTS idx_plh_lookup
-      ON player_location_history(container_id, steam_id, id DESC)
   `);
 
   db.run(`
@@ -399,57 +391,68 @@ export function getChatLog(containerId: string, limit = 100): ChatEntry[] {
   return rows.reverse();
 }
 
-// ── Location history ──────────────────────────────────────────────────────────
+// ── Location grid (marching squares fog-of-war) ────────────────────────────
 
-export interface LocationPoint {
-  id: number;
-  container_id: string;
-  steam_id: string;
-  character_name: string | null;
-  x: number;
-  y: number;
-  timestamp: string;
+export const GRID_SIZE  = 2048;
+export const GRID_BYTES = (GRID_SIZE * GRID_SIZE) >> 3; // 524 288 bytes = 512 KB
+const GRID_CELL_SIZE    = 1_447_840 / GRID_SIZE;        // ~706.96 world units per cell
+const WORLD_MIN_X       = -999_940;                     // locationX (north-south) min
+const WORLD_MIN_Y       = -738_920;                     // locationY (east-west) min
+
+function setCell(grid: Uint8Array, col: number, row: number): void {
+  if (col < 0 || col >= GRID_SIZE || row < 0 || row >= GRID_SIZE) return;
+  const bit = row * GRID_SIZE + col;
+  grid[bit >> 3] |= 1 << (bit & 7);
 }
 
-export function insertLocationPoint(
-  containerId: string,
-  steamId: string,
-  characterName: string | null,
-  x: number,
-  y: number
-) {
-  try {
-    getDb().run(
-      `INSERT INTO player_location_history (container_id, steam_id, character_name, x, y)
-       VALUES (?, ?, ?, ?, ?)`,
-      [containerId, steamId, characterName ?? null, x, y]
-    );
-  } catch (err) {
-    console.warn("[db] Failed to insert location point:", err);
+function markCircle(grid: Uint8Array, col: number, row: number, radius: number): void {
+  const r2 = radius * radius;
+  for (let dr = -radius; dr <= radius; dr++)
+    for (let dc = -radius; dc <= radius; dc++)
+      if (dr * dr + dc * dc <= r2) setCell(grid, col + dc, row + dr);
+}
+
+export function worldToGridCoords(locationX: number, locationY: number): { col: number; row: number } {
+  return {
+    col: Math.max(0, Math.min(GRID_SIZE - 1, Math.floor((locationY - WORLD_MIN_Y) / GRID_CELL_SIZE))),
+    row: Math.max(0, Math.min(GRID_SIZE - 1, Math.floor((locationX - WORLD_MIN_X) / GRID_CELL_SIZE))),
+  };
+}
+
+export function markGridPath(
+  grid: Uint8Array,
+  col1: number, row1: number,
+  col2: number, row2: number,
+  radius: number
+): void {
+  const steps = Math.max(Math.abs(col2 - col1), Math.abs(row2 - row1));
+  for (let i = 0; i <= steps; i++) {
+    const t = steps === 0 ? 0 : i / steps;
+    markCircle(grid, Math.round(col1 + (col2 - col1) * t), Math.round(row1 + (row2 - row1) * t), radius);
   }
 }
 
-export function getLastLocationPoint(
-  containerId: string,
-  steamId: string
-): LocationPoint | null {
-  return getDb()
-    .query(
-      `SELECT * FROM player_location_history
-       WHERE container_id = ? AND steam_id = ?
-       ORDER BY id DESC LIMIT 1`
-    )
-    .get(containerId, steamId) as LocationPoint | null;
+export function getLocationGrid(containerId: string, steamId: string): Uint8Array {
+  const row = getDb()
+    .query(`SELECT grid_data FROM location_grid WHERE container_id = ? AND steam_id = ?`)
+    .get(containerId, steamId) as { grid_data: Buffer } | null;
+  if (!row?.grid_data) return new Uint8Array(GRID_BYTES);
+  return new Uint8Array(row.grid_data.buffer, row.grid_data.byteOffset, row.grid_data.byteLength);
 }
 
-export function getLocationHistory(containerId: string): LocationPoint[] {
-  return getDb()
-    .query(
-      `SELECT * FROM player_location_history
-       WHERE container_id = ?
-       ORDER BY steam_id, id ASC`
-    )
-    .all(containerId) as LocationPoint[];
+export function saveLocationGrid(containerId: string, steamId: string, grid: Uint8Array): void {
+  getDb().run(
+    `INSERT INTO location_grid (container_id, steam_id, grid_data) VALUES (?, ?, ?)
+     ON CONFLICT(container_id, steam_id) DO UPDATE SET grid_data = excluded.grid_data`,
+    [containerId, steamId, grid]
+  );
+}
+
+export function getAllLocationGrids(containerId: string): { steamId: string; gridData: Buffer }[] {
+  const rows = getDb()
+    .query(`SELECT steam_id, grid_data FROM location_grid WHERE container_id = ?`)
+    .all(containerId) as { steam_id: string; grid_data: Buffer }[];
+  return rows.map(r => ({ steamId: r.steam_id, gridData: r.grid_data }));
 }
 
 // ── Map calibration ────────────────────────────────────────────────────────────

@@ -33,9 +33,11 @@ import {
   getDb,
   getChatLog,
   insertChatMessage,
-  insertLocationPoint,
-  getLastLocationPoint,
-  getLocationHistory,
+  getLocationGrid,
+  saveLocationGrid,
+  getAllLocationGrids,
+  worldToGridCoords,
+  markGridPath,
   getMapCalibration,
   saveMapCalibration,
   clearMapCalibration,
@@ -84,10 +86,11 @@ app.get("/auth/me", handleMe);
 
 const PUBLIC_HOST = process.env.PUBLIC_HOST ?? "localhost";
 
-// In-memory last-known positions for location history anti-aliasing
-// Key: `${containerId}:${steamId}` → { x, y }
-const lastPositions = new Map<string, { x: number; y: number }>();
-const MIN_MOVE_DISTANCE = 5_000; // ~50m in UE4 cm units before recording a new location point
+// In-memory tracking for grid-based location history
+// Key: `${containerId}:${steamId}` → last recorded grid position + world coords
+const lastGridPositions = new Map<string, { worldX: number; worldY: number; col: number; row: number }>();
+const CLOUD_RADIUS_CELLS     = 28;       // storage grid cells radius per point (~198m)
+const MAX_TELEPORT_WORLD_UNITS = 50_000; // skip interpolation if jump exceeds ~1.5× Jetragon max
 
 // Cache of last known API-reported server names (populated when server is online)
 const apiNameCache = new Map<string, string>();
@@ -182,24 +185,28 @@ app.get("/api/status", requireWhitelisted, async (c) => {
             // Populate Steam display name from the API's accountName field
             if (p.accountName) upsertPlayerAuth(p.userId, p.accountName);
 
-            // Track location history with anti-aliasing
+            // Track location history (grid-based, with teleport detection + path interpolation)
             if (p.location_x !== undefined && p.location_y !== undefined) {
               const key = `${container.id}:${p.userId}`;
-              const last = lastPositions.get(key);
-              const dx = last ? p.location_x - last.x : Infinity;
-              const dy = last ? p.location_y - last.y : Infinity;
-              const dist = Math.sqrt(dx * dx + dy * dy);
+              const last = lastGridPositions.get(key);
+              const { col: newCol, row: newRow } = worldToGridCoords(p.location_x, p.location_y);
 
-              if (!last || dist >= MIN_MOVE_DISTANCE) {
-                lastPositions.set(key, { x: p.location_x, y: p.location_y });
-                insertLocationPoint(
-                  container.id,
-                  p.userId,
-                  p.name,
-                  p.location_x,
-                  p.location_y
-                );
+              if (!last || last.col !== newCol || last.row !== newRow) {
+                const grid = getLocationGrid(container.id, p.userId);
+                if (!last) {
+                  markGridPath(grid, newCol, newRow, newCol, newRow, CLOUD_RADIUS_CELLS);
+                } else {
+                  const dx = p.location_x - last.worldX;
+                  const dy = p.location_y - last.worldY;
+                  if (Math.sqrt(dx * dx + dy * dy) >= MAX_TELEPORT_WORLD_UNITS) {
+                    markGridPath(grid, newCol, newRow, newCol, newRow, CLOUD_RADIUS_CELLS);
+                  } else {
+                    markGridPath(grid, last.col, last.row, newCol, newRow, CLOUD_RADIUS_CELLS);
+                  }
+                }
+                saveLocationGrid(container.id, p.userId, grid);
               }
+              lastGridPositions.set(key, { worldX: p.location_x, worldY: p.location_y, col: newCol, row: newRow });
             }
           }
         }
@@ -610,23 +617,14 @@ app.get("/api/containers/:id/chat-log", requireWhitelisted, (c) => {
 
 app.get("/api/containers/:id/location-history", requireWhitelisted, (c) => {
   const containerId = c.req.param("id");
-  const points = getLocationHistory(containerId);
-
-  // Group by steam_id
-  const grouped = new Map<string, {
-    steamId: string;
-    characterName: string | null;
-    points: { x: number; y: number; timestamp: string }[];
-  }>();
-
-  for (const p of points) {
-    if (!grouped.has(p.steam_id)) {
-      grouped.set(p.steam_id, { steamId: p.steam_id, characterName: p.character_name, points: [] });
-    }
-    grouped.get(p.steam_id)!.points.push({ x: p.x, y: p.y, timestamp: p.timestamp });
-  }
-
-  return c.json({ players: [...grouped.values()] });
+  const grids = getAllLocationGrids(containerId);
+  const nameMap = new Map(getAllPlayers().map(p => [p.steam_id, p.character_name ?? null]));
+  const players = grids.map(g => ({
+    steamId:       g.steamId,
+    characterName: nameMap.get(g.steamId) ?? null,
+    gridData:      Buffer.from(g.gridData).toString("base64"),
+  }));
+  return c.json({ players });
 });
 
 // ── Player management (admin only) ────────────────────────────────────────────

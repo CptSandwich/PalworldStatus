@@ -9,7 +9,7 @@ let currentUser = null;
 let mapCalibration = null;
 let lastStatus = null;
 let pollTimer = null;
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 10_000;
 
 // Detail page state
 let detailContainerId = null;
@@ -1099,7 +1099,18 @@ function buildDetailMap(root, s) {
     if (detailHistoryEnabled && !detailHistoryData) {
       try {
         const res = await fetch(`/api/containers/${encodeURIComponent(s.id)}/location-history`);
-        if (res.ok) detailHistoryData = await res.json();
+        if (res.ok) {
+          const data = await res.json();
+          detailHistoryData = {
+            players: data.players.map(p => ({
+              steamId:       p.steamId,
+              characterName: p.characterName,
+              polygons: p.gridData
+                ? marchingSquaresPolygons(buildRenderGrid(decodeGridBase64(p.gridData)))
+                : [],
+            })),
+          };
+        }
       } catch { detailHistoryData = null; }
     }
     renderDetailCanvas(s);
@@ -1243,6 +1254,106 @@ function buildDetailMap(root, s) {
   updateDotsOverlay(s);
 }
 
+// ── Location history: marching squares rendering ───────────────────────────
+
+const STORAGE_GRID = 2048;
+const RENDER_GRID  = 512;
+const RENDER_DS    = STORAGE_GRID / RENDER_GRID; // 4 storage cells per render cell
+
+// Lookup: 4-bit case (TL=bit3,TR=bit2,BR=bit1,BL=bit0) → [[edge1,edge2],...]
+// Edges: 0=N 1=E 2=S 3=W
+const MS_TABLE = [
+  [],            // 0
+  [[3,2]],       // 1  BL
+  [[2,1]],       // 2  BR
+  [[3,1]],       // 3  BL+BR
+  [[0,1]],       // 4  TR
+  [[0,1],[3,2]], // 5  TR+BL (ambiguous)
+  [[0,2]],       // 6  TR+BR
+  [[0,3]],       // 7  TR+BR+BL
+  [[0,3]],       // 8  TL
+  [[0,2]],       // 9  TL+BL
+  [[0,3],[2,1]], // 10 TL+BR (ambiguous)
+  [[0,1]],       // 11 TL+BR+BL
+  [[3,1]],       // 12 TL+TR
+  [[2,1]],       // 13 TL+TR+BL
+  [[3,2]],       // 14 TL+TR+BR
+  [],            // 15
+];
+
+// Edge offsets in doubled-coordinate space relative to cell (col, row)
+const MS_EDGE_HALF = [
+  [1, 0], // N: (col*2+1, row*2)
+  [2, 1], // E: (col*2+2, row*2+1)
+  [1, 2], // S: (col*2+1, row*2+2)
+  [0, 1], // W: (col*2,   row*2+1)
+];
+
+function decodeGridBase64(b64) {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+function buildRenderGrid(storageGrid) {
+  const rg = new Uint8Array(RENDER_GRID * RENDER_GRID);
+  for (let r = 0; r < RENDER_GRID; r++) {
+    for (let c = 0; c < RENDER_GRID; c++) {
+      outer: for (let dr = 0; dr < RENDER_DS; dr++) {
+        for (let dc = 0; dc < RENDER_DS; dc++) {
+          const bit = (r * RENDER_DS + dr) * STORAGE_GRID + (c * RENDER_DS + dc);
+          if (storageGrid[bit >> 3] & (1 << (bit & 7))) { rg[r * RENDER_GRID + c] = 1; break outer; }
+        }
+      }
+    }
+  }
+  return rg;
+}
+
+function marchingSquaresPolygons(rg) {
+  const G = RENDER_GRID;
+  const W = G * 2 + 1; // doubled-coord row stride
+
+  function cell(c, r) { return (c >= 0 && c < G && r >= 0 && r < G) ? rg[r * G + c] : 0; }
+  function ekey(col, row, e) {
+    const [dhx, dhy] = MS_EDGE_HALF[e];
+    return (row * 2 + dhy) * W + (col * 2 + dhx);
+  }
+
+  const adj = new Map();
+  function link(k1, k2) {
+    let a = adj.get(k1); if (!a) adj.set(k1, a = []); a.push(k2);
+    let b = adj.get(k2); if (!b) adj.set(k2, b = []); b.push(k1);
+  }
+
+  for (let r = 0; r < G - 1; r++) {
+    for (let c = 0; c < G - 1; c++) {
+      const idx = cell(c,r)*8 + cell(c+1,r)*4 + cell(c+1,r+1)*2 + cell(c,r+1);
+      for (const [e1, e2] of MS_TABLE[idx]) link(ekey(c,r,e1), ekey(c,r,e2));
+    }
+  }
+
+  const visited = new Set();
+  const polygons = [];
+  for (const [start] of adj) {
+    if (visited.has(start)) continue;
+    visited.add(start);
+    const path = [start];
+    let prev = -1, curr = start;
+    for (;;) {
+      const nbrs = adj.get(curr);
+      let next = -1;
+      for (const n of nbrs) { if (n !== prev && (!visited.has(n) || n === start)) { next = n; break; } }
+      if (next === -1 || (next === start && path.length < 3)) break;
+      if (next === start) break;
+      visited.add(next); path.push(next); prev = curr; curr = next;
+    }
+    if (path.length >= 3) polygons.push(path.map(k => [k % W / 2, Math.floor(k / W) / 2]));
+  }
+  return polygons;
+}
+
 function updateDotsOverlay(s) {
   if (!detailDotsOverlay || !mapCalibration || !detailMapImg) return;
   const { scaleX, offsetX, scaleY, offsetY } = mapCalibration;
@@ -1327,24 +1438,26 @@ function renderDetailCanvas(s) {
     };
   }
 
-  // Draw exploration fog — semi-transparent filled circles with minimal blur
+  // Draw exploration clouds via marching squares polygons
   if (detailHistoryEnabled && detailHistoryData) {
+    const cellW = natW / RENDER_GRID;
+    const cellH = natH / RENDER_GRID;
     ctx.save();
-    ctx.filter = `blur(${Math.round(3 * ds)}px)`;
     ctx.globalAlpha = 0.65;
+    ctx.filter = `blur(${Math.round(3 * ds)}px)`;
     for (const ph of detailHistoryData.players) {
-      if (detailHiddenPlayers.has(ph.steamId)) continue;
-      const color = playerColorMap[ph.steamId] ?? DOT_COLORS[0];
-      ctx.fillStyle = color;
-      for (const pt of ph.points) {
-        const { cx, cy } = worldToCanvas(pt.x, pt.y);
+      if (detailHiddenPlayers.has(ph.steamId) || !ph.polygons?.length) continue;
+      ctx.fillStyle = playerColorMap[ph.steamId] ?? DOT_COLORS[0];
+      for (const poly of ph.polygons) {
         ctx.beginPath();
-        ctx.arc(cx, cy, 7 * ds, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(poly[0][0] * cellW, poly[0][1] * cellH);
+        for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0] * cellW, poly[i][1] * cellH);
+        ctx.closePath();
+        ctx.fill('evenodd');
       }
     }
     ctx.restore();
-    ctx.filter = "none"; // explicit reset — belt-and-suspenders for browser compat
+    ctx.filter = "none";
   }
 
   // Calibration exclusion mask (step 2: darken area near Point 1)
