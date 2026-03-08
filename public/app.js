@@ -238,11 +238,15 @@ function renderLandingPage() {
   if (existingGrid) {
     // Subsequent poll: preserve page structure, only update dynamic content
 
-    // Save any unsaved cron expressions
+    // Save any unsaved cron expressions and checkbox states
     savedCronValues = new Map();
     root.querySelectorAll("[data-sid]").forEach(row => {
       const input = row.querySelector(".schedule-cron-input");
-      if (input) savedCronValues.set(row.dataset.sid, input.value);
+      const chk   = row.querySelector("input[type=checkbox]");
+      savedCronValues.set(row.dataset.sid, {
+        cron:    input ? input.value : undefined,
+        enabled: chk   ? chk.checked : undefined,
+      });
     });
 
     // Rebuild only the server grid cards
@@ -927,6 +931,52 @@ function buildBroadcastPanel(root, s) {
 
 // ── Detail map ────────────────────────────────────────────────────────────────
 
+// Auto-fit the map view on first load:
+//   0 players  → centre of map, ~50% of map visible
+//   1 player   → centred on them, ~50% of map visible
+//   2+ players → bounding box of all dots with 12% margin padding
+function fitMapToPlayers(s) {
+  if (!detailMapImg || !detailMapInner || !mapCalibration) return;
+  const imgW = detailMapImg.offsetWidth;
+  const imgH = detailMapImg.offsetHeight;
+  const vW   = detailMapInner.parentElement.offsetWidth;
+  const vH   = detailMapInner.parentElement.offsetHeight;
+  if (!imgW || !imgH || !vW || !vH) return;
+
+  const { scaleX, offsetX, scaleY, offsetY } = mapCalibration;
+  const fracs = s.players
+    .filter(p => p.locationX !== undefined && p.locationY !== undefined)
+    .map(p => ({ fx: p.locationY * scaleX + offsetX, fy: p.locationX * scaleY + offsetY }))
+    .filter(f => f.fx >= -0.1 && f.fx <= 1.1 && f.fy >= -0.1 && f.fy <= 1.1);
+
+  // "~50% of map visible" = viewport covers half the image dimensions → zoom ≈ 2
+  const halfZoom = Math.min(2 * vW / imgW, 2 * vH / imgH);
+
+  if (fracs.length === 0) {
+    mapZoom = Math.max(0.25, Math.min(halfZoom, 12));
+    mapPanX = vW / 2 - 0.5 * imgW * mapZoom;
+    mapPanY = vH / 2 - 0.5 * imgH * mapZoom;
+  } else if (fracs.length === 1) {
+    mapZoom = Math.max(0.25, Math.min(halfZoom, 12));
+    mapPanX = vW / 2 - fracs[0].fx * imgW * mapZoom;
+    mapPanY = vH / 2 - fracs[0].fy * imgH * mapZoom;
+  } else {
+    const minFx = Math.min(...fracs.map(f => f.fx));
+    const maxFx = Math.max(...fracs.map(f => f.fx));
+    const minFy = Math.min(...fracs.map(f => f.fy));
+    const maxFy = Math.max(...fracs.map(f => f.fy));
+    const MARGIN = 0.12; // expand span so dots sit 12% in from each edge
+    const spanFx = Math.max((maxFx - minFx) / (1 - 2 * MARGIN), 0.05);
+    const spanFy = Math.max((maxFy - minFy) / (1 - 2 * MARGIN), 0.05);
+    mapZoom = Math.max(0.25, Math.min(vW / (spanFx * imgW), vH / (spanFy * imgH), 12));
+    mapPanX = vW / 2 - ((minFx + maxFx) / 2) * imgW * mapZoom;
+    mapPanY = vH / 2 - ((minFy + maxFy) / 2) * imgH * mapZoom;
+  }
+
+  applyMapTransform();
+  updateDotsOverlay(s);
+}
+
 function applyMapTransform() {
   if (!detailMapInner) return;
   detailMapInner.style.transform = `translate(${mapPanX}px, ${mapPanY}px) scale(${mapZoom})`;
@@ -1206,6 +1256,17 @@ function buildDetailMap(root, s) {
   detailMapImg = mapImg;
   detailCanvas = canvas;
   detailMapInner = inner;
+
+  // Auto-fit view to players once the image dimensions are known
+  const doInitialFit = () => requestAnimationFrame(() => {
+    fitMapToPlayers(s);
+    renderDetailCanvas(s);
+  });
+  if (mapImg.complete && mapImg.naturalWidth) {
+    doInitialFit();
+  } else {
+    mapImg.addEventListener("load", doInitialFit, { once: true });
+  }
 
   // ── Zoom on scroll wheel ──────────────────────────────────────────────────
   mapContainer.addEventListener("wheel", (e) => {
@@ -1748,6 +1809,22 @@ async function fetchAndRenderSchedules() {
 function renderSchedules(schedules, servers) {
   const container = document.getElementById("schedules-list");
   if (!container) return;
+
+  // Capture focus state before wiping so we can restore it after rebuild
+  const active = document.activeElement;
+  let focusSid = null, focusField = null, focusSelStart = 0, focusSelEnd = 0;
+  if (active && container.contains(active)) {
+    const focusRow = active.closest("[data-sid]");
+    if (focusRow) {
+      focusSid = focusRow.dataset.sid;
+      if (active.classList.contains("schedule-cron-input")) {
+        focusField = "cron";
+        focusSelStart = active.selectionStart ?? 0;
+        focusSelEnd   = active.selectionEnd   ?? 0;
+      }
+    }
+  }
+
   container.innerHTML = "";
 
   for (const s of servers) {
@@ -1758,18 +1835,18 @@ function renderSchedules(schedules, servers) {
     const row = el("div", { class: `schedule-row ${enabledVal ? "enabled" : ""}`, "data-sid": s.id });
     row.appendChild(el("span", { class: "schedule-name" }, s.name));
 
-    const savedCron = savedCronValues.get(s.id);
-    if (savedCron !== undefined) savedCronValues.delete(s.id);
+    const saved = savedCronValues.get(s.id);
+    if (saved !== undefined) savedCronValues.delete(s.id);
     const cronInput = el("input", {
       class: "schedule-cron-input",
       type: "text",
       placeholder: "cron expression (e.g. 0 4 * * *)",
-      value: savedCron !== undefined ? savedCron : cronVal,
+      value: saved?.cron !== undefined ? saved.cron : cronVal,
     });
 
     const enableLabel = el("label", { class: "schedule-toggle" });
     const enableChk = el("input", { type: "checkbox" });
-    enableChk.checked = enabledVal;
+    enableChk.checked = saved?.enabled !== undefined ? saved.enabled : enabledVal;
     enableLabel.appendChild(enableChk);
     enableLabel.appendChild(document.createTextNode(" Enabled"));
 
@@ -1806,6 +1883,15 @@ function renderSchedules(schedules, servers) {
     row.appendChild(enableLabel);
     row.appendChild(saveBtn);
     container.appendChild(row);
+  }
+
+  // Restore focus to whichever input had it before the rebuild
+  if (focusSid && focusField === "cron") {
+    const restored = container.querySelector(`[data-sid="${focusSid}"] .schedule-cron-input`);
+    if (restored) {
+      restored.focus();
+      restored.setSelectionRange(focusSelStart, focusSelEnd);
+    }
   }
 }
 

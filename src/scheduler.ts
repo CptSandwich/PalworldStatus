@@ -111,6 +111,10 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
         console.warn(`[scheduler] Container ${containerId} not found at restart time`);
         return;
       }
+      if (c.status !== "running") {
+        console.log(`[scheduler] Skipping restart for ${c.displayName} — container not running (status: ${c.status})`);
+        return;
+      }
       containerName = c.displayName;
 
       const ip = await getContainerIP(containerId);
