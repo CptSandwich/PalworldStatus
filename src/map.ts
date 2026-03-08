@@ -9,11 +9,17 @@
 //   2. Find the corresponding pixel positions in the map image
 //   3. Solve for the linear transform: px = (worldX - WORLD_MIN_X) / (WORLD_MAX_X - WORLD_MIN_X) * MAP_WIDTH
 //
-// Community-sourced approximate world bounds (UE4 units, centimetres):
-const WORLD_MIN_X = -582_750;
-const WORLD_MAX_X = 582_750;
-const WORLD_MIN_Y = -301_250;
-const WORLD_MAX_Y = 301_250;
+// Palworld REST API coordinate system:
+//   1 API unit ≈ 10 real-world metres (UE4 cm / 1000)
+//   Origin (0, 0) is roughly the map centre.
+//   Known bounds as of current map version (map continues to expand):
+//     SW corner ≈ (-582, -301), NE corner ≈ (335, 617)
+//   We pad slightly beyond known bounds so dots never clip at the edges.
+//   Use the in-app calibration tool to fine-tune the mapping for your map image.
+const WORLD_MIN_X = -650;
+const WORLD_MAX_X = 450;
+const WORLD_MIN_Y = -350;
+const WORLD_MAX_Y = 700;
 
 // Update these when you have the actual map image dimensions
 export const MAP_WIDTH_PX = 2048;

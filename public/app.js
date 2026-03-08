@@ -932,9 +932,9 @@ function renderCalibPanel(panelEl, s, calibBtn, mapContainer) {
   // World coordinate inputs
   const inputRow = el("div", { class: "calib-input-row" });
   const wxLabel = el("label", { class: "calib-label" }, `World X:`);
-  const wxInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -245000" });
+  const wxInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. -320" });
   const wyLabel = el("label", { class: "calib-label" }, `World Y:`);
-  const wyInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. 178000" });
+  const wyInput = el("input", { type: "number", class: "calib-input", placeholder: "e.g. 215" });
   inputRow.appendChild(wxLabel); inputRow.appendChild(wxInput);
   inputRow.appendChild(wyLabel); inputRow.appendChild(wyInput);
   panelEl.appendChild(inputRow);
@@ -1207,7 +1207,7 @@ function renderDetailCanvas(s) {
   if (detailHistoryEnabled && detailHistoryData) {
     ctx.save();
     ctx.filter = "blur(18px)";
-    ctx.globalAlpha = 0.28;
+    ctx.globalAlpha = 0.60;
     for (const ph of detailHistoryData.players) {
       if (detailHiddenPlayers.has(ph.steamId)) continue;
       const color = playerColors[ph.steamId] ?? DOT_COLORS[0];
@@ -1242,6 +1242,41 @@ function renderDetailCanvas(s) {
     ctx.shadowBlur = 4;
     ctx.fillText(p.name, cx + 8, cy + 4);
     ctx.shadowBlur = 0;
+  }
+
+  // Draw calibration exclusion mask:
+  // When picking Point 2, darken the area near Point 1 to signal it's
+  // too close for accurate calibration. We use two layers:
+  //   1. A light overlay across the whole canvas (dims everywhere slightly)
+  //   2. A heavy radial gradient centered on P1 (darkens the exclusion zone)
+  // Outside excR the only effect is the subtle base dim; inside it gets dark.
+  if (calibState && calibState.points.length === 1) {
+    const p1 = calibState.points[0];
+    const p1x = p1.fracX * detailCanvas.width;
+    const p1y = p1.fracY * detailCanvas.height;
+    // Exclusion radius: 30% of the shorter canvas dimension
+    const excR = Math.min(detailCanvas.width, detailCanvas.height) * 0.30;
+
+    // Layer 1: subtle global dim so the "good" area is visually distinct
+    ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
+
+    // Layer 2: heavy dark cloud centered on P1, fading out at excR
+    const grad = ctx.createRadialGradient(p1x, p1y, 0, p1x, p1y, excR);
+    grad.addColorStop(0,   "rgba(0, 0, 0, 0.68)");
+    grad.addColorStop(0.55, "rgba(0, 0, 0, 0.50)");
+    grad.addColorStop(1,   "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, detailCanvas.width, detailCanvas.height);
+
+    // "Too close" label just below the exclusion zone centre
+    ctx.save();
+    ctx.font = "bold 12px 'Noto Sans', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255, 120, 120, 0.85)";
+    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 5;
+    ctx.fillText("Too close", p1x, p1y + excR * 0.55);
+    ctx.restore();
   }
 
   // Draw calibration markers

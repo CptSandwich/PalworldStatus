@@ -85,7 +85,7 @@ const PUBLIC_HOST = process.env.PUBLIC_HOST ?? "localhost";
 // In-memory last-known positions for location history anti-aliasing
 // Key: `${containerId}:${steamId}` → { x, y }
 const lastPositions = new Map<string, { x: number; y: number }>();
-const MIN_MOVE_DISTANCE = 5000; // ~50m in Unreal Engine world units
+const MIN_MOVE_DISTANCE = 5; // minimum coordinate delta before recording a new location point
 
 // Cache of last known API-reported server names (populated when server is online)
 const apiNameCache = new Map<string, string>();
