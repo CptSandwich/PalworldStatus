@@ -1643,25 +1643,40 @@ function renderDetailCanvas(s) {
       (rc * RENDER_CELL_WORLD + GRID_MIN_LOCATION_Y) * scaleX * natW + offsetX * natW,
       (rr * RENDER_CELL_WORLD + GRID_MIN_LOCATION_X) * scaleY * natH + offsetY * natH,
     ];
-    ctx.save();
-    ctx.globalAlpha = 0.65;
-    ctx.filter = `blur(${Math.round(3 * ds)}px)`;
-    for (const ph of detailHistoryData.players) {
-      if (detailHiddenPlayers.has(ph.playerId) || !ph.polygons?.length) continue;
-      ctx.fillStyle = playerColorMap[ph.playerId] ?? DOT_COLORS[0];
-      for (const poly of ph.polygons) {
-        ctx.beginPath();
-        const [x0, y0] = rcToCanvas(poly[0][0], poly[0][1]);
-        ctx.moveTo(x0, y0);
-        for (let i = 1; i < poly.length; i++) {
-          const [x, y] = rcToCanvas(poly[i][0], poly[i][1]);
-          ctx.lineTo(x, y);
+
+    // Helper: draw all visible player polygons
+    const drawClouds = () => {
+      for (const ph of detailHistoryData.players) {
+        if (detailHiddenPlayers.has(ph.playerId) || !ph.polygons?.length) continue;
+        ctx.fillStyle = playerColorMap[ph.playerId] ?? DOT_COLORS[0];
+        for (const poly of ph.polygons) {
+          ctx.beginPath();
+          const [x0, y0] = rcToCanvas(poly[0][0], poly[0][1]);
+          ctx.moveTo(x0, y0);
+          for (let i = 1; i < poly.length; i++) {
+            const [x, y] = rcToCanvas(poly[i][0], poly[i][1]);
+            ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.fill('evenodd');
         }
-        ctx.closePath();
-        ctx.fill('evenodd');
       }
-    }
+    };
+
+    // Pass 1: wide soft glow base
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    ctx.filter = `blur(${Math.round(7 * ds)}px)`;
+    drawClouds();
     ctx.restore();
+
+    // Pass 2: tighter bright fill for definition
+    ctx.save();
+    ctx.globalAlpha = 0.82;
+    ctx.filter = `blur(${Math.round(2 * ds)}px)`;
+    drawClouds();
+    ctx.restore();
+
     ctx.filter = "none";
   }
 
