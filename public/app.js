@@ -10,6 +10,7 @@ let viewAsWhitelisted = false;
 let mapCalibration = null;
 let lastStatus = null;
 let pollTimer = null;
+const pmExpandedIds = new Set(); // steam IDs whose PM sub-rows should stay expanded
 const POLL_INTERVAL_MS = 10_000;
 
 // Detail page state
@@ -707,8 +708,8 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
         };
         header.appendChild(expandBtn);
 
-        // Admin actions
-        if (isAdmin()) {
+        // Admin actions (not shown for admin's own character)
+        if (isAdmin() && steamId !== currentUser?.steamId) {
           const actionsEl = el("div", { class: "player-actions" });
           const isBanned = knownData?.game_banned === 1;
           if (isBanned) {
@@ -1901,6 +1902,10 @@ async function fetchAndRenderPlayers() {
       const isOnline = onlineEntries.length > 0;
       const hasServerNames = p.serverNames.length > 0;
 
+      // Auto-add online players to the expanded set; never auto-remove
+      if (isOnline) pmExpandedIds.add(p.steam_id);
+      const isExpanded = pmExpandedIds.has(p.steam_id);
+
       // ── Main row ──
       const tr = el("tr", { class: isOnline ? "pm-row pm-row--online" : "pm-row" });
 
@@ -1908,12 +1913,14 @@ async function fetchAndRenderPlayers() {
       const chevronTd = el("td", { class: "pm-chevron-cell" });
       let subRows = [];
       if (hasServerNames) {
-        const chevron = el("button", { class: "pm-chevron", "data-expanded": isOnline ? "true" : "false" },
-          isOnline ? "▼" : "▶");
+        const chevron = el("button", { class: "pm-chevron", "data-expanded": isExpanded ? "true" : "false" },
+          isExpanded ? "▼" : "▶");
         chevron.onclick = () => {
           const expanded = chevron.dataset.expanded === "true";
           chevron.dataset.expanded = expanded ? "false" : "true";
           chevron.textContent = expanded ? "▶" : "▼";
+          if (expanded) pmExpandedIds.delete(p.steam_id);
+          else pmExpandedIds.add(p.steam_id);
           subRows.forEach(r => { r.hidden = expanded; });
         };
         chevronTd.appendChild(chevron);
@@ -1956,7 +1963,7 @@ async function fetchAndRenderPlayers() {
           const serverOnline = onlineContainerIds.has(sn.container_id);
           const subServerId = containerIdToServerId.get(sn.container_id);
           const subTr = el("tr", { class: "pm-subrow" });
-          subTr.hidden = !isOnline;
+          subTr.hidden = !isExpanded;
           subTr.appendChild(el("td", {})); // chevron col (empty)
           subTr.appendChild(el("td", {})); // Steam Name col (empty)
           const subTd = el("td", { colspan: String(COL_COUNT - 2), class: "pm-subrow-content" });
