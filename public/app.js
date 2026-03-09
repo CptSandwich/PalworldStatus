@@ -422,6 +422,12 @@ function buildServerCard(s) {
     ));
   }
 
+  if (s.containerStats) {
+    body.appendChild(el("div", { class: "card-resource-stats" },
+      `CPU ${s.containerStats.cpuPercent.toFixed(1)}%  ·  RAM ${fmtMB(s.containerStats.memUsageMB)}`
+    ));
+  }
+
   // Idle countdown
   if (s.idleCountdownSeconds !== null) {
     const mins = Math.floor(s.idleCountdownSeconds / 60);
@@ -632,6 +638,10 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
       const h = Math.floor(m.uptime / 3600);
       const min = Math.floor((m.uptime % 3600) / 60);
       addMetric("Uptime", h > 0 ? `${h}h ${min}m` : `${min}m`);
+    }
+    if (s.containerStats) {
+      addMetric("CPU", s.containerStats.cpuPercent.toFixed(1) + "%");
+      addMetric("RAM", fmtMB(s.containerStats.memUsageMB));
     }
     infoPanel.appendChild(metricsRow);
   }
@@ -2223,6 +2233,10 @@ function escHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function fmtMB(mb) {
+  return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
 }
 
 function formatTs(ts, timeOnly = false) {

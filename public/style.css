@@ -344,6 +344,14 @@ a:hover { color: var(--accent-hover); }
   color: var(--text-secondary);
   letter-spacing: 0.5px;
 }
+.card-resource-stats {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.3px;
+}
 
 .idle-countdown {
   display: flex;

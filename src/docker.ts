@@ -99,3 +99,27 @@ export async function stopContainer(containerId: string): Promise<void> {
 export async function restartContainer(containerId: string): Promise<void> {
   await docker.getContainer(containerId).restart({ t: 30 });
 }
+
+export interface ContainerStats {
+  cpuPercent: number;
+  memUsageMB: number;
+}
+
+export async function getContainerStats(containerId: string): Promise<ContainerStats | null> {
+  try {
+    const container = docker.getContainer(containerId);
+    const raw = await container.stats({ stream: false }) as any;
+
+    const cpuDelta = raw.cpu_stats.cpu_usage.total_usage - raw.precpu_stats.cpu_usage.total_usage;
+    const sysDelta = raw.cpu_stats.system_cpu_usage - raw.precpu_stats.system_cpu_usage;
+    const numCPUs = raw.cpu_stats.online_cpus ?? raw.cpu_stats.cpu_usage.percpu_usage?.length ?? 1;
+    const cpuPercent = sysDelta > 0 ? (cpuDelta / sysDelta) * numCPUs * 100 : 0;
+
+    const cache = raw.memory_stats.stats?.cache ?? 0;
+    const memUsageMB = (raw.memory_stats.usage - cache) / 1_048_576;
+
+    return { cpuPercent, memUsageMB };
+  } catch {
+    return null;
+  }
+}

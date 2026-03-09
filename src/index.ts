@@ -15,6 +15,7 @@ import {
   startContainer,
   stopContainer,
   restartContainer,
+  getContainerStats,
 } from "./docker.js";
 import { getServerInfo, getPlayers, getMetrics, broadcast, gracefulStop, kickPlayer, banPlayer, unbanPlayer } from "./palworld.js";
 import {
@@ -169,10 +170,11 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         console.warn(`[status] ${container.name} (${container.id.slice(0, 12)}) → could not resolve container IP`);
       }
 
-      const [info, players, metrics] = await Promise.all([
+      const [info, players, metrics, containerStats] = await Promise.all([
         ip ? getServerInfo(ip, container.restPort, container.restPassword) : null,
         ip ? getPlayers(ip, container.restPort, container.restPassword) : null,
         ip ? getMetrics(ip, container.restPort, container.restPassword) : null,
+        getContainerStats(container.id),
       ]);
 
       let gameStatus: "online" | "starting" | "crashed";
@@ -291,6 +293,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         pendingTimedAction: getPendingTimedAction(container.id),
         crashGuard: getCrashGuardInfo(container.id),
         joinPassword: container.joinPassword,
+        containerStats,
       };
     })
   );
