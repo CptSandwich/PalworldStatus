@@ -1130,6 +1130,7 @@ a:hover { color: var(--accent-hover); }
 .pm-subrow td {
   padding: 2px 0;
   border-top: none !important;
+  background: rgba(255,255,255,0.04);
 }
 
 .pm-subrow-content {
@@ -1138,7 +1139,7 @@ a:hover { color: var(--accent-hover); }
   gap: 6px;
   font-size: 0.8rem;
   color: var(--text-secondary);
-  padding: 2px 8px 2px 20px !important;
+  padding: 2px 8px 2px 32px !important;
   white-space: nowrap;
 }
 
