@@ -32,87 +32,14 @@ export function getLocationDb(): Database {
 }
 
 function initLocationSchema() {
-  // map_calibration kept for migration purposes (data is read then deleted into JSON file)
   locationDb.run(`
-    CREATE TABLE IF NOT EXISTS map_calibration (
-      id         INTEGER PRIMARY KEY CHECK (id = 1),
-      p1_world_x REAL NOT NULL, p1_world_y REAL NOT NULL,
-      p1_frac_x  REAL NOT NULL, p1_frac_y  REAL NOT NULL,
-      p2_world_x REAL NOT NULL, p2_world_y REAL NOT NULL,
-      p2_frac_x  REAL NOT NULL, p2_frac_y  REAL NOT NULL,
-      scale_x    REAL NOT NULL, offset_x   REAL NOT NULL,
-      scale_y    REAL NOT NULL, offset_y   REAL NOT NULL
+    CREATE TABLE IF NOT EXISTS location_grid (
+      container_id TEXT NOT NULL,
+      steam_id     TEXT NOT NULL,
+      grid_data    BLOB NOT NULL,
+      PRIMARY KEY (container_id, steam_id)
     )
   `);
-  migrateCalibrationFromDb();
-  migrateLocationGridToSteamId();
-}
-
-function migrateCalibrationFromDb() {
-  try { readFileSync(CALIBRATION_PATH); return; } catch { /* file absent, proceed */ }
-  try {
-    const row = locationDb.query(`SELECT * FROM map_calibration WHERE id = 1`).get() as Record<string, number> | null;
-    if (!row) return;
-    writeFileSync(CALIBRATION_PATH, JSON.stringify({
-      scaleX: row.scale_x,   offsetX: row.offset_x,
-      scaleY: row.scale_y,   offsetY: row.offset_y,
-      p1WorldX: row.p1_world_x, p1WorldY: row.p1_world_y,
-      p1FracX:  row.p1_frac_x,  p1FracY:  row.p1_frac_y,
-      p2WorldX: row.p2_world_x, p2WorldY: row.p2_world_y,
-      p2FracX:  row.p2_frac_x,  p2FracY:  row.p2_frac_y,
-    }));
-    locationDb.run(`DELETE FROM map_calibration WHERE id = 1`);
-    console.log("[db] Migrated map calibration to", CALIBRATION_PATH);
-  } catch { /* map_calibration table may not exist on fresh DB */ }
-}
-
-function migrateLocationGridToSteamId() {
-  // If old schema (player_id column) still exists, rebuild keyed by steam_id
-  const cols = locationDb.query(`PRAGMA table_info(location_grid)`).all() as { name: string }[];
-  if (cols.length > 0 && !cols.some(c => c.name === "player_id")) return; // already migrated
-
-  if (cols.length > 0) {
-    // Old table exists — merge rows by (container_id, steam_id) via bitwise OR
-    const rows = locationDb.query(
-      `SELECT container_id, steam_id, grid_data FROM location_grid WHERE steam_id IS NOT NULL`
-    ).all() as { container_id: string; steam_id: string; grid_data: Buffer }[];
-
-    const merged = new Map<string, Uint8Array>();
-    for (const row of rows) {
-      const key = `${row.container_id}\x00${row.steam_id}`;
-      const existing = merged.get(key) ?? new Uint8Array(GRID_BYTES);
-      const src = new Uint8Array(row.grid_data.buffer, row.grid_data.byteOffset, row.grid_data.byteLength);
-      for (let i = 0; i < GRID_BYTES; i++) existing[i] |= src[i];
-      merged.set(key, existing);
-    }
-    locationDb.run(`DROP TABLE location_grid`);
-    locationDb.run(`
-      CREATE TABLE location_grid (
-        container_id TEXT NOT NULL,
-        steam_id     TEXT NOT NULL,
-        grid_data    BLOB NOT NULL,
-        PRIMARY KEY (container_id, steam_id)
-      )
-    `);
-    for (const [key, grid] of merged) {
-      const nul = key.indexOf("\x00");
-      locationDb.run(
-        `INSERT INTO location_grid (container_id, steam_id, grid_data) VALUES (?, ?, ?)`,
-        [key.slice(0, nul), key.slice(nul + 1), grid]
-      );
-    }
-    console.log(`[db] Migrated location_grid to steam_id PK (${merged.size} rows)`);
-  } else {
-    // Fresh DB — create new schema directly
-    locationDb.run(`
-      CREATE TABLE IF NOT EXISTS location_grid (
-        container_id TEXT NOT NULL,
-        steam_id     TEXT NOT NULL,
-        grid_data    BLOB NOT NULL,
-        PRIMARY KEY (container_id, steam_id)
-      )
-    `);
-  }
 }
 
 function initSchema() {
