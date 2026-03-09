@@ -1877,16 +1877,19 @@ async function fetchAndRenderPlayers() {
           style: "font-size:11px;color:var(--accent-purple);font-family:var(--font-mono);padding:2px 6px",
         }, "[admin]"));
       } else {
-        if (p.status === "whitelisted") {
-          const blBtn = el("button", { class: "btn btn-small btn-danger" }, "✗ Blacklist");
-          blBtn.onclick = () => setPlayerStatus(p.steam_id, "blacklisted", blBtn);
-          actionTd.appendChild(blBtn);
-        } else {
-          const wlBtn = el("button", { class: "btn btn-small" }, "✓ Whitelist");
-          wlBtn.onclick = () => setPlayerStatus(p.steam_id, "whitelisted", wlBtn);
-          actionTd.appendChild(wlBtn);
-        }
-        const delBtn = el("button", { class: "btn btn-small btn-danger", title: "Delete record" }, "🗑");
+        // Clickable status badge — cycles: pending → blacklisted → whitelisted → blacklisted
+        const STATUS_CYCLE = { pending: "blacklisted", blacklisted: "whitelisted", whitelisted: "blacklisted" };
+        const STATUS_LABEL = { pending: "Pending", blacklisted: "Blacklisted", whitelisted: "Whitelisted" };
+        const STATUS_CLASS = { pending: "status-badge--pending", blacklisted: "status-badge--blacklisted", whitelisted: "status-badge--whitelisted" };
+        const badge = el("span", { class: `status-badge ${STATUS_CLASS[p.status] ?? "status-badge--pending"}`, title: "Click to change access level" }, STATUS_LABEL[p.status] ?? "Pending");
+        badge.onclick = async () => {
+          const next = STATUS_CYCLE[p.status] ?? "blacklisted";
+          badge.style.opacity = "0.5";
+          badge.style.pointerEvents = "none";
+          await setPlayerStatus(p.steam_id, next, badge);
+        };
+        actionTd.appendChild(badge);
+        const delBtn = el("button", { class: "btn btn-small btn-danger", title: "Delete record", style: "margin-left:6px" }, "🗑");
         delBtn.onclick = () => deletePlayerRecord(p.steam_id, delBtn);
         actionTd.appendChild(delBtn);
       }
@@ -1896,8 +1899,7 @@ async function fetchAndRenderPlayers() {
   } catch { }
 }
 
-async function setPlayerStatus(steamId, status, btn) {
-  btn.disabled = true;
+async function setPlayerStatus(steamId, status, el) {
   try {
     const res = await fetch(`/api/known-players/${encodeURIComponent(steamId)}`, {
       method: "PATCH",
@@ -1907,11 +1909,14 @@ async function setPlayerStatus(steamId, status, btn) {
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       alert(`Error: ${d.error ?? res.statusText}`);
+      el.style.opacity = "";
+      el.style.pointerEvents = "";
     } else {
       await fetchAndRenderPlayers();
     }
-  } finally {
-    btn.disabled = false;
+  } catch {
+    el.style.opacity = "";
+    el.style.pointerEvents = "";
   }
 }
 

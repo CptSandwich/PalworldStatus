@@ -74,7 +74,7 @@ function initSchema() {
       first_seen    TEXT NOT NULL DEFAULT (datetime('now')),
       last_seen     TEXT NOT NULL DEFAULT (datetime('now')),
       last_server   TEXT,
-      status        TEXT NOT NULL DEFAULT 'blacklisted'
+      status        TEXT NOT NULL DEFAULT 'pending'
     )
   `);
 
@@ -188,7 +188,7 @@ export interface KnownPlayer {
   last_server: string | null;
   last_container_id: string | null;
   level: number | null;
-  status: "whitelisted" | "blacklisted";
+  status: "whitelisted" | "blacklisted" | "pending";
   game_banned: number; // 1 if banned via this app's Ban button, 0 otherwise
 }
 
@@ -234,11 +234,11 @@ export function upsertPlayerAuth(steamId: string, displayName: string) {
 
 export function getPlayerStatus(
   steamId: string
-): "whitelisted" | "blacklisted" | null {
+): "whitelisted" | "blacklisted" | "pending" | null {
   const row = getDb()
     .query(`SELECT status FROM known_players WHERE steam_id = ?`)
     .get(steamId) as { status: string } | null;
-  return (row?.status as "whitelisted" | "blacklisted") ?? null;
+  return (row?.status as "whitelisted" | "blacklisted" | "pending") ?? null;
 }
 
 export function getAllPlayers(): KnownPlayer[] {
@@ -249,7 +249,7 @@ export function getAllPlayers(): KnownPlayer[] {
 
 export function setPlayerStatus(
   steamId: string,
-  status: "whitelisted" | "blacklisted"
+  status: "whitelisted" | "blacklisted" | "pending"
 ) {
   getDb().run(
     `UPDATE known_players SET status = ? WHERE steam_id = ?`,

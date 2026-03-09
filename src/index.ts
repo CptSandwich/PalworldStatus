@@ -775,9 +775,9 @@ app.get("/api/known-players", requireAdmin, (c) => {
 app.patch("/api/known-players/:steamId", requireAdmin, async (c) => {
   const user = getCurrentUser(c)!;
   const steamId = c.req.param("steamId");
-  const body = await c.req.json<{ status: "whitelisted" | "blacklisted" }>();
+  const body = await c.req.json<{ status: "whitelisted" | "blacklisted" | "pending" }>();
 
-  if (body.status !== "whitelisted" && body.status !== "blacklisted") {
+  if (body.status !== "whitelisted" && body.status !== "blacklisted" && body.status !== "pending") {
     return c.json({ error: "Invalid status" }, 400);
   }
 
