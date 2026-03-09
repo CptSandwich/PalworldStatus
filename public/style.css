@@ -1137,7 +1137,7 @@ a:hover { color: var(--accent-hover); }
   align-items: center;
   gap: 6px;
   font-size: 0.8rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 2px 8px 2px 44px !important;
   white-space: nowrap;
   overflow: hidden;

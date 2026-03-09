@@ -1971,9 +1971,9 @@ async function fetchAndRenderPlayers() {
             charLink.onclick = () => { location.hash = `server/${subServerId}`; };
             subTd.appendChild(charLink);
           } else {
-            subTd.appendChild(document.createTextNode(sn.characterName));
+            subTd.appendChild(el("span", {}, sn.characterName));
           }
-          subTd.appendChild(document.createTextNode(` — ${sn.containerName}`));
+          subTd.appendChild(el("span", {}, ` — ${sn.containerName}`));
 
           // Action buttons (not shown for admin's own row)
           if (!isAdminRow) {
