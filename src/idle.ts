@@ -22,6 +22,7 @@ import {
 } from "./db.js";
 import { getContainerIP, stopContainer } from "./docker.js";
 import { broadcast, gracefulStop } from "./palworld.js";
+import { notifyIntentionalShutdown } from "./crashguard.js";
 
 // ── In-memory idle tracker ────────────────────────────────────────────────────
 
@@ -239,6 +240,7 @@ async function executeIdleShutdown(t: IdleTracker, containerIp: string) {
   t.idleStartedAt = null;
   t.shutdownTimer = null;
 
+  notifyIntentionalShutdown(t.containerId);
   await gracefulStop(containerIp, t.restPort, t.restPassword,
     "Server is shutting down (no players).");
   insertChatMessage(t.containerId, null, "Server is shutting down (no players).");

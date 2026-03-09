@@ -1793,7 +1793,7 @@ async function refreshChatLog(containerId) {
     }
     for (const m of data.messages) {
       const entry = el("div", { class: "chat-entry" });
-      const time = el("span", { class: "chat-time" }, formatTs(m.timestamp, true));
+      const time = el("span", { class: "chat-time" }, formatTs(m.timestamp));
       entry.appendChild(time);
       if (m.player_name) {
         const player = el("span", { class: "chat-player" }, m.player_name + ": ");

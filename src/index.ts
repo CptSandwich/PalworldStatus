@@ -56,7 +56,7 @@ import {
 import { initScheduler, reloadSchedule, cancelJob } from "./scheduler.js";
 import { initChatLogStreams, startChatLogStream, registerChatHandler, unregisterChatHandler } from "./chatlog.js";
 import { MAP_CALIBRATION } from "./map.js";
-import { notifyCrashed, notifyOnline, notifyStopped, getCrashGuardInfo } from "./crashguard.js";
+import { notifyCrashed, notifyOnline, notifyStopped, getCrashGuardInfo, notifyIntentionalShutdown } from "./crashguard.js";
 
 // ── In-memory state (declared early for bootstrap use) ────────────────────────
 
@@ -335,6 +335,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       insertChatMessage(containerId, null, "Server is restarting now.");
       await new Promise((res) => setTimeout(res, 1000));
     }
+    notifyIntentionalShutdown(containerId);
     await restartContainer(containerId);
     logAudit("RESTART", {
       steamId: user.steamId,
@@ -403,6 +404,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
         insertChatMessage(containerId, null, "Server is restarting now.");
         await new Promise((res) => setTimeout(res, 1000));
       }
+      notifyIntentionalShutdown(containerId);
       await restartContainer(containerId);
       recordExecution();
       logAudit("RESTART", {
@@ -451,6 +453,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       pendingTimedActions.delete(containerId);
       const lip = await getContainerIP(containerId);
       if (lip) {
+        notifyIntentionalShutdown(containerId);
         await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now.");
         insertChatMessage(containerId, null, "Server is restarting now.");
         await new Promise((res) => setTimeout(res, 3000));
@@ -502,6 +505,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       if (!livePlayers || livePlayers.length > 0) return;
       // Server became empty — restart immediately
       cancelTimedAction(containerId);
+      notifyIntentionalShutdown(containerId);
       await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now (all players disconnected).");
       insertChatMessage(containerId, null, "Server is restarting now (all players disconnected).");
       await new Promise((res) => setTimeout(res, 3000));
@@ -569,6 +573,7 @@ app.post("/api/containers/:id/stop", requireAdmin, async (c) => {
     await new Promise((res) => setTimeout(res, 1000));
   }
 
+  notifyIntentionalShutdown(containerId);
   await stopContainer(containerId);
 
   logAudit("STOP", {
@@ -676,6 +681,7 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
 
   async function doAction() {
     pendingTimedActions.delete(containerId);
+    notifyIntentionalShutdown(containerId);
     const ip = await getContainerIP(containerId);
     if (ip) {
       const finalMsg = `Server is ${body.action === "restart" ? "restarting" : "shutting down"} now.`;

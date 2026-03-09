@@ -28,6 +28,7 @@ import {
 } from "./db.js";
 import { getContainerIP, restartContainer, discoverPalworldContainers } from "./docker.js";
 import { broadcast, gracefulStop } from "./palworld.js";
+import { notifyIntentionalShutdown } from "./crashguard.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
 
       const ip = await getContainerIP(containerId);
       if (ip) {
+        notifyIntentionalShutdown(containerId);
         await gracefulStop(ip, c.restPort, c.restPassword, "Scheduled server restart.");
         insertChatMessage(containerId, null, "Scheduled server restart.");
         await new Promise((res) => setTimeout(res, 3000));

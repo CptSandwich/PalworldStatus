@@ -25,13 +25,26 @@ interface CrashTracker {
 
 const trackers = new Map<string, CrashTracker>();
 
+// Containers currently undergoing an intentional stop or restart.
+// While present, REST going dark is not treated as a crash.
+const intentionalShutdowns = new Set<string>();
+
 // ── Public API ─────────────────────────────────────────────────────────────────
+
+/**
+ * Call before initiating any deliberate stop or restart so that the next poll
+ * cycle(s) do not classify the resulting REST outage as a crash.
+ */
+export function notifyIntentionalShutdown(containerId: string): void {
+  intentionalShutdowns.add(containerId);
+}
 
 /**
  * Call every poll cycle when gameStatus==="crashed" and the container IP resolved
  * (i.e. we're sure the game itself is unresponsive, not just a network issue).
  */
 export function notifyCrashed(containerId: string, containerName: string): void {
+  if (intentionalShutdowns.has(containerId)) return; // deliberate — not a crash
   let t = trackers.get(containerId);
 
   if (!t) {
@@ -98,6 +111,7 @@ export function notifyCrashed(containerId: string, containerName: string): void 
  * Attempt history is kept until the window expires so the rate-limit remains accurate.
  */
 export function notifyOnline(containerId: string): void {
+  intentionalShutdowns.delete(containerId);
   const t = trackers.get(containerId);
   if (!t) return;
 
@@ -121,6 +135,7 @@ export function notifyOnline(containerId: string): void {
  * Cancel any pending restart and fully remove state (e.g. container stopped intentionally).
  */
 export function notifyStopped(containerId: string): void {
+  intentionalShutdowns.delete(containerId);
   const t = trackers.get(containerId);
   if (!t) return;
   if (t.restartTimer !== null) clearTimeout(t.restartTimer);
