@@ -302,8 +302,8 @@ function renderLandingPage() {
     const pmTable = el("table", { class: "data-table", id: "players-table" });
     const pmHead = el("thead", {});
     const pmHeadRow = el("tr", {});
-    for (const h of ["", "Steam Name", "Steam ID", "First Seen", "Last Seen", "Last Server", "Access"]) {
-      pmHeadRow.appendChild(el("th", {}, h));
+    for (const [i, h] of ["", "Steam Name", "Steam ID", "First Seen", "Last Seen", "Last Server", "Access"].entries()) {
+      pmHeadRow.appendChild(el("th", i === 0 ? { style: "width:32px" } : {}, h));
     }
     pmHead.appendChild(pmHeadRow);
     pmTable.appendChild(pmHead);
