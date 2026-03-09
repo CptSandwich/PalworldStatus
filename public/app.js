@@ -1834,6 +1834,10 @@ async function cancelIdle(id) {
 
 // ── Audit log ─────────────────────────────────────────────────────────────────
 
+// Actions only admins should see in the audit log
+const ADMIN_ONLY_ACTIONS = new Set(["KICK", "BAN", "UNBAN"]);
+const ADMIN_ONLY_ACTION_PREFIX = "PLAYER_";
+
 async function fetchAndRenderAuditLog() {
   try {
     const res = await fetch("/api/audit-log");
@@ -1842,7 +1846,9 @@ async function fetchAndRenderAuditLog() {
     const tbody = document.getElementById("audit-body");
     if (!tbody) return;
     tbody.innerHTML = "";
+    const admin = isAdmin();
     for (const e of data.entries) {
+      if (!admin && (ADMIN_ONLY_ACTIONS.has(e.action) || e.action.startsWith(ADMIN_ONLY_ACTION_PREFIX))) continue;
       const tr = el("tr", {});
       tr.appendChild(el("td", { class: "mono" }, formatTs(e.timestamp)));
       tr.appendChild(el("td", {}, e.display_name ?? e.steam_id ?? "system"));
