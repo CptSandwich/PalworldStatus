@@ -395,6 +395,19 @@ function buildServerCard(s) {
     conn.appendChild(copyBtn);
     meta.appendChild(conn);
   }
+  if (s.joinPassword) {
+    const pwRow = el("div", { class: "server-connection" });
+    pwRow.appendChild(el("span", {}, `Password: ${s.joinPassword}`));
+    const copyPwBtn = el("button", { class: "copy-btn", title: "Copy password" }, "⎘");
+    copyPwBtn.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(s.joinPassword);
+      copyPwBtn.textContent = "✓";
+      setTimeout(() => copyPwBtn.textContent = "⎘", 1500);
+    };
+    pwRow.appendChild(copyPwBtn);
+    meta.appendChild(pwRow);
+  }
   body.appendChild(meta);
 
   if (gameStatus === "online") {

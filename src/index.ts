@@ -136,6 +136,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
           idleCountdownSeconds: null,
           pendingTimedAction: getPendingTimedAction(container.id),
           crashGuard: null,
+          joinPassword: container.joinPassword,
         };
       }
 
@@ -258,6 +259,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         idleCountdownSeconds: getIdleCountdownSeconds(container.id),
         pendingTimedAction: getPendingTimedAction(container.id),
         crashGuard: getCrashGuardInfo(container.id),
+        joinPassword: container.joinPassword,
       };
     })
   );

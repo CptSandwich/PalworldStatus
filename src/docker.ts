@@ -12,6 +12,7 @@ export interface PalworldContainer {
   allowStart: boolean;
   idleShutdownMinutes: number;
   gamePort: number | null;
+  joinPassword: string | null; // label palworld-status.join-password — null = private (not shown)
 }
 
 const LABEL_PREFIX = "palworld-status";
@@ -63,6 +64,7 @@ export async function discoverPalworldContainers(): Promise<PalworldContainer[]>
         10
       ),
       gamePort,
+      joinPassword: labels[`${LABEL_PREFIX}.join-password`] ?? null,
     };
   });
 }
