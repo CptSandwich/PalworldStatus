@@ -944,6 +944,7 @@ app.get("/api/schedules", requireAdmin, (c) => {
 
 app.put("/api/schedules/:containerId", requireAdmin, async (c) => {
   const containerId = c.req.param("containerId");
+  const user = getCurrentUser(c)!;
 
   let body: { cronExpr?: string; enabled?: boolean };
   try {
@@ -965,13 +966,33 @@ app.put("/api/schedules/:containerId", requireAdmin, async (c) => {
     return c.json({ error: "Failed to save schedule" }, 500);
   }
 
+  const containers = await discoverPalworldContainers();
+  const container = containers.find((x) => x.id === containerId);
+  logAudit("SCHEDULE_SAVED", {
+    steamId: user.steamId,
+    displayName: user.displayName,
+    containerName: apiNameCache.get(containerId) ?? container?.name,
+    details: `cron="${cronExpr}" enabled=${enabled}`,
+  });
+
   return c.json({ ok: true });
 });
 
-app.delete("/api/schedules/:containerId", requireAdmin, (c) => {
+app.delete("/api/schedules/:containerId", requireAdmin, async (c) => {
   const containerId = c.req.param("containerId");
+  const user = getCurrentUser(c)!;
+
   deleteSchedule(containerId);
   cancelJob(containerId);
+
+  const containers = await discoverPalworldContainers();
+  const container = containers.find((x) => x.id === containerId);
+  logAudit("SCHEDULE_DELETED", {
+    steamId: user.steamId,
+    displayName: user.displayName,
+    containerName: apiNameCache.get(containerId) ?? container?.name,
+  });
+
   return c.json({ ok: true });
 });
 

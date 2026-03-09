@@ -1773,13 +1773,31 @@ function renderHistoryLegend(legendEl, s) {
 
 async function buildChatLog(root, containerId) {
   const section = el("div", {});
-  section.appendChild(el("h2", { class: "section-title", style: "margin-bottom:10px" }, "Chat Log"));
+
+  const chatHeader = el("div", { style: "display:flex;align-items:center;gap:12px;margin-bottom:10px" });
+  chatHeader.appendChild(el("h2", { class: "section-title", style: "margin:0" }, "Chat Log"));
+  const sysLabel = el("label", { style: "display:flex;align-items:center;gap:6px;font-size:0.82rem;color:var(--text-secondary);cursor:pointer;margin-left:auto" });
+  const sysCheck = el("input", { type: "checkbox", id: "chat-show-system" });
+  sysCheck.addEventListener("change", () => applySystemMessageFilter());
+  sysLabel.appendChild(sysCheck);
+  sysLabel.appendChild(document.createTextNode("Show system messages"));
+  chatHeader.appendChild(sysLabel);
+  section.appendChild(chatHeader);
 
   const logEl = el("div", { class: "chat-log", id: "chat-log" });
   section.appendChild(logEl);
   root.appendChild(section);
 
   await refreshChatLog(containerId);
+}
+
+function applySystemMessageFilter() {
+  const logEl = document.getElementById("chat-log");
+  if (!logEl) return;
+  const show = document.getElementById("chat-show-system")?.checked ?? false;
+  for (const entry of logEl.querySelectorAll(".chat-entry--system")) {
+    entry.hidden = !show;
+  }
 }
 
 async function refreshChatLog(containerId) {
@@ -1794,8 +1812,11 @@ async function refreshChatLog(containerId) {
       logEl.appendChild(el("span", { class: "chat-log-empty" }, "No messages recorded yet."));
       return;
     }
+    const showSystem = document.getElementById("chat-show-system")?.checked ?? false;
     for (const m of data.messages) {
-      const entry = el("div", { class: "chat-entry" });
+      const isSystem = !m.player_name;
+      const entry = el("div", { class: isSystem ? "chat-entry chat-entry--system" : "chat-entry" });
+      if (isSystem) entry.hidden = !showSystem;
       const time = el("span", { class: "chat-time" }, formatTs(m.timestamp));
       entry.appendChild(time);
       if (m.player_name) {
