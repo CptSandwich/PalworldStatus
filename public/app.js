@@ -379,9 +379,8 @@ function buildServerCard(s) {
   // Body
   const body = el("div", { class: "server-card-body" });
 
-  // Version + connection + container name
+  // Version + connection
   const meta = el("div", { class: "server-meta" });
-  if (s.containerName) meta.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
   meta.appendChild(el("span", { class: "server-version" }, s.version ? `v${s.version}` : "—"));
   if (s.connectionAddress) {
     const conn = el("div", { class: "server-connection" });
@@ -478,6 +477,9 @@ function buildServerCard(s) {
     startBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "start", s.name, startBtn); };
     footer.appendChild(startBtn);
   }
+  if (_isAdmin && s.containerName) {
+    footer.appendChild(el("span", { class: "footer-container-name" }, s.containerName));
+  }
   if (footer.children.length > 0) card.appendChild(footer);
 
   return card;
@@ -528,6 +530,8 @@ async function renderDetailPage(s) {
   root.innerHTML = "";
 
   // Detail header (IDs allow targeted status updates on subsequent polls)
+  // Line 1: back | dot | server name | [status right-aligned]
+  // Line 2 (admin only):              | [container name right-aligned]
   const hdr = el("div", { class: "detail-header" });
   const backBtn = el("button", { class: "back-btn" }, "← Back");
   backBtn.onclick = () => { location.hash = ""; };
@@ -538,14 +542,17 @@ async function renderDetailPage(s) {
     style: `background:var(--status-${gameStatus});box-shadow:0 0 7px var(--status-${gameStatus})`,
   }));
   hdr.appendChild(el("span", { class: "detail-server-name" }, s.name));
-  if (isAdmin() && s.containerName) {
-    hdr.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
-  }
-  hdr.appendChild(el("span", {
+  // Right side: status on row 1, container name on row 2
+  const hdrRight = el("div", { class: "detail-header-right" });
+  hdrRight.appendChild(el("span", {
     id: "dp-status-label",
     class: "status-label",
     style: `color:var(--status-${gameStatus})`,
   }, statusLabel));
+  if (isAdmin() && s.containerName) {
+    hdrRight.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
+  }
+  hdr.appendChild(hdrRight);
   root.appendChild(hdr);
 
   // Dynamic section (rebuilt on every poll)
@@ -570,7 +577,6 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
   // Server info strip
   const infoPanel = el("div", { class: "detail-panel" });
   const metaRow = el("div", { class: "server-meta" });
-  if (s.containerName) metaRow.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
   metaRow.appendChild(el("span", { class: "server-version" }, s.version ? `v${s.version}` : "—"));
   if (s.connectionAddress) {
     const conn = el("div", { class: "server-connection" });
