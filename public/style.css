@@ -1126,14 +1126,26 @@ a:hover { color: var(--accent-hover); }
 .pm-row--online td { background: rgba(62, 207, 207, 0.05); }
 
 .pm-subrow td {
-  padding: 3px 8px 3px 2.2rem;
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  padding: 2px 0;
   border-top: none !important;
 }
 
-.pm-online-dot  { color: var(--accent); margin-right: 6px; }
-.pm-offline-dot { color: var(--text-muted); margin-right: 6px; opacity: 0.35; }
+.pm-subrow-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 2px 8px !important;
+}
+
+.pm-subrow-actions { margin-left: auto; display: flex; gap: 4px; }
+
+.pm-online-dot  { color: var(--status-online); margin-right: 0; }
+.pm-offline-dot { color: var(--text-muted); margin-right: 0; }
+
+.pm-name-link { cursor: pointer; color: var(--accent); text-decoration: underline dotted; }
+.pm-name-link:hover { opacity: 0.75; }
 
 .pm-chevron-cell { width: 28px; padding: 0 4px; text-align: center; }
 

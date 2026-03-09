@@ -1873,12 +1873,14 @@ async function fetchAndRenderPlayers() {
     if (!tbody) return;
     tbody.innerHTML = "";
 
-    // Build online map from lastStatus: steamId → [{serverName, characterName}]
+    // Build online map from lastStatus: steamId → [{containerId, serverName, characterName}]
     const onlineMap = new Map();
+    const containerIdToServerId = new Map();
     for (const server of lastStatus ?? []) {
+      containerIdToServerId.set(server.id, server.serverId);
       for (const player of server.players ?? []) {
         if (!onlineMap.has(player.steamId)) onlineMap.set(player.steamId, []);
-        onlineMap.get(player.steamId).push({ serverName: server.name, characterName: player.name });
+        onlineMap.get(player.steamId).push({ containerId: server.id, serverName: server.name, characterName: player.name });
       }
     }
 
@@ -1947,16 +1949,52 @@ async function fetchAndRenderPlayers() {
 
       // ── Sub-rows (one per server the player has been seen on) ──
       if (hasServerNames) {
-        // Build a quick lookup of which container_ids are online for this steam_id
-        const onlineContainerNames = new Set(onlineEntries.map(e => e.serverName));
+        const onlineContainerIds = new Set(onlineEntries.map(e => e.containerId));
+        const isAdminRow = p.steam_id === currentUser?.steamId;
 
         for (const sn of p.serverNames) {
-          const serverOnline = onlineContainerNames.has(sn.containerName);
-          const subTr = el("tr", { class: "pm-subrow", hidden: !isOnline });
-          const subTd = el("td", { colspan: String(COL_COUNT) });
+          const serverOnline = onlineContainerIds.has(sn.container_id);
+          const subServerId = containerIdToServerId.get(sn.container_id);
+          const subTr = el("tr", { class: "pm-subrow" });
+          subTr.hidden = !isOnline;
+          subTr.appendChild(el("td", {})); // chevron col (empty)
+          subTr.appendChild(el("td", {})); // Steam Name col (empty)
+          const subTd = el("td", { colspan: String(COL_COUNT - 2), class: "pm-subrow-content" });
+
           const dot = el("span", { class: serverOnline ? "pm-online-dot" : "pm-offline-dot" }, "●");
           subTd.appendChild(dot);
-          subTd.appendChild(document.createTextNode(`${sn.characterName} — ${sn.containerName}`));
+
+          // Character name — clickable if server is in lastStatus
+          if (subServerId) {
+            const charLink = el("span", { class: "pm-name-link" }, sn.characterName);
+            charLink.onclick = () => { location.hash = `server/${subServerId}`; };
+            subTd.appendChild(charLink);
+          } else {
+            subTd.appendChild(document.createTextNode(sn.characterName));
+          }
+          subTd.appendChild(document.createTextNode(` — ${sn.containerName}`));
+
+          // Action buttons (not shown for admin's own row)
+          if (!isAdminRow) {
+            const isBanned = p.game_banned === 1;
+            const actionsDiv = el("div", { class: "pm-subrow-actions" });
+            if (isBanned) {
+              const unbanBtn = el("button", { class: "btn btn-small btn-secondary" }, "Unban");
+              unbanBtn.onclick = () => doPlayerAction(sn.container_id, p.steam_id, "unban", sn.characterName, unbanBtn);
+              actionsDiv.appendChild(unbanBtn);
+            } else {
+              if (serverOnline) {
+                const kickBtn = el("button", { class: "btn btn-small btn-secondary" }, "Kick");
+                kickBtn.onclick = () => doPlayerAction(sn.container_id, p.steam_id, "kick", sn.characterName, kickBtn);
+                actionsDiv.appendChild(kickBtn);
+              }
+              const banBtn = el("button", { class: "btn btn-small btn-danger" }, "Ban");
+              banBtn.onclick = () => doPlayerAction(sn.container_id, p.steam_id, "ban", sn.characterName, banBtn);
+              actionsDiv.appendChild(banBtn);
+            }
+            subTd.appendChild(actionsDiv);
+          }
+
           subTr.appendChild(subTd);
           subRows.push(subTr);
           tbody.appendChild(subTr);
