@@ -124,6 +124,14 @@ function initSchema() {
       ON chat_log(container_id, id DESC)
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS container_meta (
+      container_id  TEXT PRIMARY KEY,
+      version       TEXT,
+      server_name   TEXT,
+      last_updated  TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
 
 }
 
@@ -531,4 +539,35 @@ export function saveMapCalibration(
 
 export function clearMapCalibration() {
   getLocationDb().run(`DELETE FROM map_calibration WHERE id = 1`);
+}
+
+// ── Container meta (persisted version / server name) ─────────────────────────
+
+export interface ContainerMeta {
+  container_id: string;
+  version: string | null;
+  server_name: string | null;
+  last_updated: string;
+}
+
+export function upsertContainerMeta(
+  containerId: string,
+  version: string | null,
+  serverName: string | null
+) {
+  getDb().run(
+    `INSERT INTO container_meta (container_id, version, server_name, last_updated)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(container_id) DO UPDATE SET
+       version      = excluded.version,
+       server_name  = excluded.server_name,
+       last_updated = excluded.last_updated`,
+    [containerId, version ?? null, serverName ?? null]
+  );
+}
+
+export function getAllContainerMeta(): ContainerMeta[] {
+  return getDb()
+    .query(`SELECT * FROM container_meta`)
+    .all() as ContainerMeta[];
 }

@@ -41,6 +41,8 @@ import {
   getMapCalibration,
   saveMapCalibration,
   clearMapCalibration,
+  upsertContainerMeta,
+  getAllContainerMeta,
 } from "./db.js";
 import {
   registerIdleTracker,
@@ -55,10 +57,32 @@ import { initChatLogStreams, startChatLogStream } from "./chatlog.js";
 import { MAP_CALIBRATION } from "./map.js";
 import { notifyCrashed, notifyOnline, notifyStopped, getCrashGuardInfo } from "./crashguard.js";
 
+// ── In-memory state (declared early for bootstrap use) ────────────────────────
+
+// Cache of last known API-reported server names and versions (populated when server is online)
+const apiNameCache    = new Map<string, string>();
+const apiVersionCache = new Map<string, string>();
+
+// Track when each container first appeared as Docker-running so we can give the
+// game server a grace period to start before classifying it as "crashed"
+const containerFirstRunningAt = new Map<string, number>();
+const GAME_STARTUP_GRACE_MS = 2 * 60_000; // 2 minutes
+
+// Containers that have had at least one successful REST API response this session.
+// Used to skip the startup grace period when REST goes away (shutdown/crash), so
+// the server never briefly shows "Starting" after it was already "Online".
+const containerWasOnline = new Set<string>();
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 // Init DB (creates tables and runs migrations)
 getDb();
+
+// Pre-populate in-memory caches from persisted container meta
+for (const row of getAllContainerMeta()) {
+  if (row.version)     apiVersionCache.set(row.container_id, row.version);
+  if (row.server_name) apiNameCache.set(row.container_id, row.server_name);
+}
 
 // Recover idle state from DB across restarts
 recoverIdleStates();
@@ -94,19 +118,6 @@ const MAX_TELEPORT_WORLD_UNITS = 50_000;   // skip interpolation if jump exceeds
 const SPEED_JUMP_MULTIPLIER    = 4;        // current speed must be 4× rolling avg to suspect teleport
 const MIN_SPEED_TELEPORT       = 8_000;    // min distance (world units) to apply speed-continuity check
 
-// Cache of last known API-reported server names (populated when server is online)
-const apiNameCache = new Map<string, string>();
-
-// Track when each container first appeared as Docker-running so we can give the
-// game server a grace period to start before classifying it as "crashed"
-const containerFirstRunningAt = new Map<string, number>();
-const GAME_STARTUP_GRACE_MS = 2 * 60_000; // 2 minutes
-
-// Containers that have had at least one successful REST API response this session.
-// Used to skip the startup grace period when REST goes away (shutdown/crash), so
-// the server never briefly shows "Starting" after it was already "Online".
-const containerWasOnline = new Set<string>();
-
 app.get("/api/status", requireWhitelisted, async (c) => {
   const containers = await discoverPalworldContainers();
 
@@ -132,7 +143,8 @@ app.get("/api/status", requireWhitelisted, async (c) => {
           name: apiNameCache.get(container.id) ?? container.name,
           dockerStatus: container.status,
           gameStatus: "offline" as const,
-          version: null,
+          version: apiVersionCache.get(container.id) ?? null,
+          containerName: container.name,
           players: [],
           maxPlayers: null,
           connectionAddress: `${PUBLIC_HOST}:${container.gamePort ?? 8211}`,
@@ -190,8 +202,12 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         }
       }
 
-      // Use server name from REST API; cache it for when server goes offline
-      if (info?.serverName) apiNameCache.set(container.id, info.serverName);
+      // Cache server name and version for display when server goes offline, and persist to DB
+      if (info?.serverName || info?.version) {
+        if (info.serverName) apiNameCache.set(container.id, info.serverName);
+        if (info.version)    apiVersionCache.set(container.id, info.version);
+        upsertContainerMeta(container.id, info.version ?? apiVersionCache.get(container.id) ?? null, info.serverName ?? apiNameCache.get(container.id) ?? null);
+      }
       const displayName = apiNameCache.get(container.id) ?? container.name;
 
       // Update player DB records, idle state, and location history

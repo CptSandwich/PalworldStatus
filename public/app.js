@@ -379,8 +379,9 @@ function buildServerCard(s) {
   // Body
   const body = el("div", { class: "server-card-body" });
 
-  // Version + connection
+  // Version + connection + container name
   const meta = el("div", { class: "server-meta" });
+  if (s.containerName) meta.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
   meta.appendChild(el("span", { class: "server-version" }, s.version ? `v${s.version}` : "—"));
   if (s.connectionAddress) {
     const conn = el("div", { class: "server-connection" });
@@ -477,9 +478,6 @@ function buildServerCard(s) {
     startBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "start", s.name, startBtn); };
     footer.appendChild(startBtn);
   }
-  if (_isAdmin && s.containerName) {
-    footer.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
-  }
   if (footer.children.length > 0) card.appendChild(footer);
 
   return card;
@@ -571,10 +569,9 @@ async function renderDetailPage(s) {
 function _buildDetailDynamic(dyn, s, gameStatus) {
   // Server info strip
   const infoPanel = el("div", { class: "detail-panel" });
-  const metaRow = el("div", { style: "display:flex;gap:24px;flex-wrap:wrap;align-items:center" });
-  if (s.version) {
-    metaRow.appendChild(el("span", { class: "server-version" }, `v${s.version}`));
-  }
+  const metaRow = el("div", { class: "server-meta" });
+  if (s.containerName) metaRow.appendChild(el("span", { class: "container-name-badge" }, s.containerName));
+  metaRow.appendChild(el("span", { class: "server-version" }, s.version ? `v${s.version}` : "—"));
   if (s.connectionAddress) {
     const conn = el("div", { class: "server-connection" });
     conn.appendChild(el("span", {}, s.connectionAddress));
@@ -586,6 +583,18 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
     };
     conn.appendChild(copyBtn);
     metaRow.appendChild(conn);
+  }
+  if (s.joinPassword) {
+    const pwRow = el("div", { class: "server-connection" });
+    pwRow.appendChild(el("span", {}, `Password: ${s.joinPassword}`));
+    const copyPwBtn = el("button", { class: "copy-btn", title: "Copy password" }, "⎘");
+    copyPwBtn.onclick = () => {
+      navigator.clipboard.writeText(s.joinPassword);
+      copyPwBtn.textContent = "✓";
+      setTimeout(() => copyPwBtn.textContent = "⎘", 1500);
+    };
+    pwRow.appendChild(copyPwBtn);
+    metaRow.appendChild(pwRow);
   }
   if (gameStatus === "online") {
     metaRow.appendChild(el("span", { class: "player-count" },
@@ -1335,6 +1344,83 @@ function buildDetailMap(root, s) {
   };
   window.addEventListener("mousemove", onMouseMove);
   window.addEventListener("mouseup", onMouseUp);
+
+  // ── Touch: single-finger pan, two-finger pinch-to-zoom ────────────────────
+  let touch = null; // { startX, startY, initX, initY } for single-touch pan
+  let pinch = null; // { midX, midY, dist, zoom, panX, panY } for pinch
+
+  mapContainer.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      const t = e.touches[0];
+      touch = { startX: t.clientX - mapPanX, startY: t.clientY - mapPanY,
+                initX: t.clientX, initY: t.clientY };
+      pinch = null;
+    } else if (e.touches.length === 2) {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      const rect = mapContainer.getBoundingClientRect();
+      const midX = (a.clientX + b.clientX) / 2 - rect.left;
+      const midY = (a.clientY + b.clientY) / 2 - rect.top;
+      pinch = { midX, midY, dist, zoom: mapZoom, panX: mapPanX, panY: mapPanY };
+      touch = null;
+    }
+  }, { passive: false });
+
+  mapContainer.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    if (e.touches.length === 1 && touch) {
+      const t = e.touches[0];
+      mapPanX = t.clientX - touch.startX;
+      mapPanY = t.clientY - touch.startY;
+      applyMapTransform();
+    } else if (e.touches.length === 2 && pinch) {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      const scale = dist / pinch.dist;
+      const newZoom = Math.min(Math.max(pinch.zoom * scale, 0.25), 12);
+      const rect = mapContainer.getBoundingClientRect();
+      const midX = (a.clientX + b.clientX) / 2 - rect.left;
+      const midY = (a.clientY + b.clientY) / 2 - rect.top;
+      // Zoom centred on the pinch midpoint
+      const ix = (pinch.midX - pinch.panX) / pinch.zoom;
+      const iy = (pinch.midY - pinch.panY) / pinch.zoom;
+      mapPanX = midX - ix * newZoom;
+      mapPanY = midY - iy * newZoom;
+      mapZoom = newZoom;
+      applyMapTransform();
+    }
+  }, { passive: false });
+
+  mapContainer.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    if (e.touches.length === 0) {
+      // Single-tap for calibration (no movement)
+      if (touch && calibState) {
+        const last = e.changedTouches[0];
+        const dx = last.clientX - touch.initX, dy = last.clientY - touch.initY;
+        if (dx * dx + dy * dy < 25) {
+          const rect = mapContainer.getBoundingClientRect();
+          const cx = (last.clientX - rect.left - mapPanX) / mapZoom;
+          const cy = (last.clientY - rect.top  - mapPanY) / mapZoom;
+          calibState.pendingFracX = cx / detailMapImg.offsetWidth;
+          calibState.pendingFracY = cy / detailMapImg.offsetHeight;
+          renderDetailCanvas(s);
+          updateDotsOverlay(s);
+          calibState.refreshPanel();
+        }
+      }
+      touch = null;
+      pinch = null;
+    } else if (e.touches.length === 1) {
+      // Lifted one finger during pinch — switch back to single-touch pan
+      const t = e.touches[0];
+      touch = { startX: t.clientX - mapPanX, startY: t.clientY - mapPanY,
+                initX: t.clientX, initY: t.clientY };
+      pinch = null;
+    }
+  }, { passive: false });
+
   mapEventCleanup = () => {
     window.removeEventListener("mousemove", onMouseMove);
     window.removeEventListener("mouseup", onMouseUp);
