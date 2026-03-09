@@ -133,6 +133,16 @@ function initSchema() {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS player_server_names (
+      steam_id       TEXT NOT NULL,
+      container_id   TEXT NOT NULL,
+      character_name TEXT NOT NULL,
+      last_seen      TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (steam_id, container_id)
+    )
+  `);
+
 }
 
 // ── Audit log ─────────────────────────────────────────────────────────────────
@@ -199,7 +209,8 @@ export function upsertPlayer(
   containerId: string,
   level: number
 ) {
-  getDb().run(
+  const db = getDb();
+  db.run(
     `INSERT INTO known_players
        (steam_id, display_name, character_name, last_seen, last_server, last_container_id, level)
      VALUES (?, '', ?, datetime('now'), ?, ?, ?)
@@ -210,6 +221,14 @@ export function upsertPlayer(
        last_container_id   = excluded.last_container_id,
        level               = excluded.level`,
     [steamId, characterName, serverName, containerId, level]
+  );
+  db.run(
+    `INSERT INTO player_server_names (steam_id, container_id, character_name, last_seen)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(steam_id, container_id) DO UPDATE SET
+       character_name = excluded.character_name,
+       last_seen      = excluded.last_seen`,
+    [steamId, containerId, characterName]
   );
 }
 
@@ -266,6 +285,13 @@ export function setGameBanned(steamId: string, banned: boolean) {
 
 export function deletePlayer(steamId: string) {
   getDb().run(`DELETE FROM known_players WHERE steam_id = ?`, [steamId]);
+  getDb().run(`DELETE FROM player_server_names WHERE steam_id = ?`, [steamId]);
+}
+
+export function getAllPlayerServerNames(): { steam_id: string; container_id: string; character_name: string }[] {
+  return getDb()
+    .query(`SELECT steam_id, container_id, character_name FROM player_server_names`)
+    .all() as { steam_id: string; container_id: string; character_name: string }[];
 }
 
 // ── Restart schedules ─────────────────────────────────────────────────────────

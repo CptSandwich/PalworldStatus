@@ -23,6 +23,7 @@ import {
   upsertPlayer,
   upsertPlayerAuth,
   getAllPlayers,
+  getAllPlayerServerNames,
   getKnownPlayersByContainer,
   setPlayerStatus,
   setGameBanned,
@@ -769,7 +770,26 @@ app.get("/api/containers/:id/location-history", requireWhitelisted, (c) => {
 // ── Player management (admin only) ────────────────────────────────────────────
 
 app.get("/api/known-players", requireAdmin, (c) => {
-  return c.json({ players: getAllPlayers() });
+  const players = getAllPlayers();
+  const allServerNames = getAllPlayerServerNames();
+  const allMeta = getAllContainerMeta();
+
+  const containerDisplayNames = new Map(
+    allMeta.map((m) => [m.container_id, m.server_name || m.container_id])
+  );
+
+  const byPlayer = new Map<string, { container_id: string; containerName: string; characterName: string }[]>();
+  for (const row of allServerNames) {
+    if (!byPlayer.has(row.steam_id)) byPlayer.set(row.steam_id, []);
+    byPlayer.get(row.steam_id)!.push({
+      container_id:  row.container_id,
+      containerName: containerDisplayNames.get(row.container_id) ?? row.container_id,
+      characterName: row.character_name,
+    });
+  }
+
+  const enriched = players.map((p) => ({ ...p, serverNames: byPlayer.get(p.steam_id) ?? [] }));
+  return c.json({ players: enriched });
 });
 
 app.patch("/api/known-players/:steamId", requireAdmin, async (c) => {

@@ -292,25 +292,7 @@ function renderLandingPage() {
   gridSection.appendChild(grid);
   root.appendChild(gridSection);
 
-  // Audit log
-  const auditSection = el("section", { class: "audit-section" });
-  const auditHeader = el("div", { class: "section-header" });
-  auditHeader.appendChild(el("h2", { class: "section-title" }, "Audit Log"));
-  auditSection.appendChild(auditHeader);
-  const auditTable = el("table", { class: "data-table", id: "audit-table" });
-  const auditHead = el("thead", {});
-  const auditHeadRow = el("tr", {});
-  for (const h of ["Time", "User", "Action", "Server", "Details"]) {
-    auditHeadRow.appendChild(el("th", {}, h));
-  }
-  auditHead.appendChild(auditHeadRow);
-  auditTable.appendChild(auditHead);
-  auditTable.appendChild(el("tbody", { id: "audit-body" }));
-  auditSection.appendChild(auditTable);
-  root.appendChild(auditSection);
-  fetchAndRenderAuditLog();
-
-  // Admin: player management + restart schedules
+  // Admin: player management + restart schedules (above audit log)
   if (isAdmin()) {
     const pmSection = el("section", { class: "admin-section", id: "player-management" });
     const pmHeader = el("div", { class: "section-header" });
@@ -319,7 +301,7 @@ function renderLandingPage() {
     const pmTable = el("table", { class: "data-table", id: "players-table" });
     const pmHead = el("thead", {});
     const pmHeadRow = el("tr", {});
-    for (const h of ["Character", "Steam Name", "First Seen", "Last Seen", "Last Server", "Access"]) {
+    for (const h of ["", "Steam Name", "Steam ID", "First Seen", "Last Seen", "Last Server", "Access"]) {
       pmHeadRow.appendChild(el("th", {}, h));
     }
     pmHead.appendChild(pmHeadRow);
@@ -337,6 +319,26 @@ function renderLandingPage() {
     root.appendChild(schedSection);
     fetchAndRenderSchedules();
   }
+
+  // Audit log
+  const auditSection = el("section", { class: "audit-section" });
+  const auditHeader = el("div", { class: "section-header" });
+  auditHeader.appendChild(el("h2", { class: "section-title" }, "Audit Log"));
+  auditSection.appendChild(auditHeader);
+  const auditScroll = el("div", { class: "table-scroll-wrap" });
+  const auditTable = el("table", { class: "data-table", id: "audit-table" });
+  const auditHead = el("thead", {});
+  const auditHeadRow = el("tr", {});
+  for (const h of ["Time", "User", "Action", "Server", "Details"]) {
+    auditHeadRow.appendChild(el("th", {}, h));
+  }
+  auditHead.appendChild(auditHeadRow);
+  auditTable.appendChild(auditHead);
+  auditTable.appendChild(el("tbody", { id: "audit-body" }));
+  auditScroll.appendChild(auditTable);
+  auditSection.appendChild(auditScroll);
+  root.appendChild(auditSection);
+  fetchAndRenderAuditLog();
 }
 
 // ── Server card (landing) ──────────────────────────────────────────────────────
@@ -1870,23 +1872,64 @@ async function fetchAndRenderPlayers() {
     const tbody = document.getElementById("players-body");
     if (!tbody) return;
     tbody.innerHTML = "";
-    for (const p of data.players) {
-      const tr = el("tr", {});
-      tr.appendChild(el("td", {}, p.character_name || "—"));
+
+    // Build online map from lastStatus: steamId → [{serverName, characterName}]
+    const onlineMap = new Map();
+    for (const server of lastStatus ?? []) {
+      for (const player of server.players ?? []) {
+        if (!onlineMap.has(player.steamId)) onlineMap.set(player.steamId, []);
+        onlineMap.get(player.steamId).push({ serverName: server.name, characterName: player.name });
+      }
+    }
+
+    // Sort: online players first (by online count desc), then by last_seen desc (API order)
+    const sorted = [...data.players].sort((a, b) => {
+      const ao = (onlineMap.get(a.steam_id) ?? []).length;
+      const bo = (onlineMap.get(b.steam_id) ?? []).length;
+      return bo - ao; // ties preserve original order (last_seen desc from API)
+    });
+
+    const STATUS_CYCLE  = { pending: "blacklisted", blacklisted: "whitelisted", whitelisted: "blacklisted" };
+    const STATUS_LABEL  = { pending: "Pending", blacklisted: "Blacklisted", whitelisted: "Whitelisted" };
+    const STATUS_CLASS  = { pending: "status-badge--pending", blacklisted: "status-badge--blacklisted", whitelisted: "status-badge--whitelisted" };
+    const COL_COUNT = 7; // expand + Steam Name + Steam ID + First Seen + Last Seen + Last Server + Access
+
+    for (const p of sorted) {
+      const onlineEntries = onlineMap.get(p.steam_id) ?? [];
+      const isOnline = onlineEntries.length > 0;
+      const hasServerNames = p.serverNames.length > 0;
+
+      // ── Main row ──
+      const tr = el("tr", { class: isOnline ? "pm-row pm-row--online" : "pm-row" });
+
+      // Expand/collapse chevron cell
+      const chevronTd = el("td", { class: "pm-chevron-cell" });
+      let subRows = [];
+      if (hasServerNames) {
+        const chevron = el("button", { class: "pm-chevron", "data-expanded": isOnline ? "true" : "false" },
+          isOnline ? "▼" : "▶");
+        chevron.onclick = () => {
+          const expanded = chevron.dataset.expanded === "true";
+          chevron.dataset.expanded = expanded ? "false" : "true";
+          chevron.textContent = expanded ? "▶" : "▼";
+          subRows.forEach(r => { r.hidden = expanded; });
+        };
+        chevronTd.appendChild(chevron);
+      }
+      tr.appendChild(chevronTd);
+
       tr.appendChild(el("td", {}, p.display_name || "—"));
+      tr.appendChild(el("td", { class: "mono", style: "font-size:0.78rem" }, p.steam_id));
       tr.appendChild(el("td", { class: "mono" }, formatTs(p.first_seen)));
       tr.appendChild(el("td", { class: "mono" }, formatTs(p.last_seen)));
       tr.appendChild(el("td", {}, p.last_server ?? "—"));
+
       const actionTd = el("td", {});
       if (p.steam_id === currentUser?.steamId) {
         actionTd.appendChild(el("span", {
           style: "font-size:11px;color:var(--accent-purple);font-family:var(--font-mono);padding:2px 6px",
         }, "[admin]"));
       } else {
-        // Clickable status badge — cycles: pending → blacklisted → whitelisted → blacklisted
-        const STATUS_CYCLE = { pending: "blacklisted", blacklisted: "whitelisted", whitelisted: "blacklisted" };
-        const STATUS_LABEL = { pending: "Pending", blacklisted: "Blacklisted", whitelisted: "Whitelisted" };
-        const STATUS_CLASS = { pending: "status-badge--pending", blacklisted: "status-badge--blacklisted", whitelisted: "status-badge--whitelisted" };
         const badge = el("span", { class: `status-badge ${STATUS_CLASS[p.status] ?? "status-badge--pending"}`, title: "Click to change access level" }, STATUS_LABEL[p.status] ?? "Pending");
         badge.onclick = async () => {
           const next = STATUS_CYCLE[p.status] ?? "blacklisted";
@@ -1901,6 +1944,24 @@ async function fetchAndRenderPlayers() {
       }
       tr.appendChild(actionTd);
       tbody.appendChild(tr);
+
+      // ── Sub-rows (one per server the player has been seen on) ──
+      if (hasServerNames) {
+        // Build a quick lookup of which container_ids are online for this steam_id
+        const onlineContainerNames = new Set(onlineEntries.map(e => e.serverName));
+
+        for (const sn of p.serverNames) {
+          const serverOnline = onlineContainerNames.has(sn.containerName);
+          const subTr = el("tr", { class: "pm-subrow", hidden: !isOnline });
+          const subTd = el("td", { colspan: String(COL_COUNT) });
+          const dot = el("span", { class: serverOnline ? "pm-online-dot" : "pm-offline-dot" }, "●");
+          subTd.appendChild(dot);
+          subTd.appendChild(document.createTextNode(`${sn.characterName} — ${sn.containerName}`));
+          subTr.appendChild(subTd);
+          subRows.push(subTr);
+          tbody.appendChild(subTr);
+        }
+      }
     }
   } catch { }
 }

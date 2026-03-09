@@ -1107,6 +1107,48 @@ a:hover { color: var(--accent-hover); }
 
 /* ── Audit log / tables ─────────────────────────────────────────────────────── */
 
+.table-scroll-wrap {
+  max-height: calc(20 * 38px); /* ~20 rows before scroll */
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+}
+
+/* Sticky header inside scrollable wrapper */
+.table-scroll-wrap .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* ── Player management expandable rows ──────────────────────────────────────── */
+
+.pm-row--online td { background: rgba(62, 207, 207, 0.05); }
+
+.pm-subrow td {
+  padding: 3px 8px 3px 2.2rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  border-top: none !important;
+}
+
+.pm-online-dot  { color: var(--accent); margin-right: 6px; }
+.pm-offline-dot { color: var(--text-muted); margin-right: 6px; opacity: 0.35; }
+
+.pm-chevron-cell { width: 28px; padding: 0 4px; text-align: center; }
+
+.pm-chevron {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.65rem;
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.pm-chevron:hover { color: var(--accent); }
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
