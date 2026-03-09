@@ -16,7 +16,7 @@ const POLL_INTERVAL_MS = 10_000;
 // Detail page state
 let detailContainerId = null;
 let detailHistoryEnabled = false;
-let detailHiddenPlayers = new Set(); // playerIds hidden in history view
+let detailHiddenPlayers = new Set(); // steamIds hidden in history view
 let detailHistoryData = null;        // cached history response
 let detailKnownPlayers = null;       // known_players for current container
 let detailExpandedPlayers = new Set(); // steamIds with expanded rows
@@ -30,7 +30,7 @@ let mapEventCleanup = null;          // fn to remove window drag listeners
 let calibState = null;               // null | { step, points[], pendingFracX, pendingFracY }
 let detailFullyRendered = false;     // true after first detail page render; resets on navigation
 let detailDotsOverlay = null;        // <div> overlay for player dots (outside zoom/pan inner)
-const playerColorMap = {};           // playerId → color string (persists across renders)
+const playerColorMap = {};           // steamId → color string (persists across renders)
 let savedCronValues = new Map();     // preserves unsaved cron text across landing page polls
 
 // Player dot colours (cycle through palette)
@@ -1206,7 +1206,6 @@ function buildDetailMap(root, s) {
           const data = await res.json();
           detailHistoryData = {
             players: data.players.map(p => ({
-              playerId:      p.playerId,
               steamId:       p.steamId,
               characterName: p.characterName,
               polygons: p.gridData
@@ -1566,11 +1565,10 @@ function updateDotsOverlay(s) {
     const fracY = p.locationX * scaleY + offsetY;
     const sx = fracX * imgW * mapZoom + mapPanX;
     const sy = fracY * imgH * mapZoom + mapPanY;
-    const dotKey = p.playerId || p.steamId;
-    if (!playerColorMap[dotKey]) {
-      playerColorMap[dotKey] = DOT_COLORS[Object.keys(playerColorMap).length % DOT_COLORS.length];
+    if (!playerColorMap[p.steamId]) {
+      playerColorMap[p.steamId] = DOT_COLORS[Object.keys(playerColorMap).length % DOT_COLORS.length];
     }
-    const color = playerColorMap[dotKey];
+    const color = playerColorMap[p.steamId];
     const wrap = el("div", { class: "player-dot-wrap" });
     wrap.style.left = sx + "px";
     wrap.style.top = sy + "px";
@@ -1650,8 +1648,8 @@ function renderDetailCanvas(s) {
     // Helper: draw all visible player polygons
     const drawClouds = () => {
       for (const ph of detailHistoryData.players) {
-        if (detailHiddenPlayers.has(ph.playerId) || !ph.polygons?.length) continue;
-        ctx.fillStyle = playerColorMap[ph.playerId] ?? DOT_COLORS[0];
+        if (detailHiddenPlayers.has(ph.steamId) || !ph.polygons?.length) continue;
+        ctx.fillStyle = playerColorMap[ph.steamId] ?? DOT_COLORS[0];
         for (const poly of ph.polygons) {
           ctx.beginPath();
           const [x0, y0] = rcToCanvas(poly[0][0], poly[0][1]);
@@ -1729,19 +1727,17 @@ function renderHistoryLegend(legendEl, s) {
   }
   legendEl.style.display = "";
 
-  // Build a unified player map keyed by playerId (or steamId fallback for live-only players)
-  // Entry: [id, { name, isLive }]
-  const allPlayers = new Map(); // id → { name, id }
+  // Build a unified player map keyed by steamId
+  const allPlayers = new Map(); // steamId → { name, id }
   if (detailHistoryData) {
     for (const ph of detailHistoryData.players) {
-      allPlayers.set(ph.playerId, { name: ph.characterName ?? ph.steamId, id: ph.playerId });
+      allPlayers.set(ph.steamId, { name: ph.characterName ?? ph.steamId, id: ph.steamId });
     }
   }
-  // Live players: use playerId if available; fall back to steamId for dedup
+  // Live players: merge by steamId (live name overrides if not already in history)
   for (const p of s.players) {
-    const id = p.playerId || p.steamId;
-    if (!allPlayers.has(id)) {
-      allPlayers.set(id, { name: p.name, id });
+    if (!allPlayers.has(p.steamId)) {
+      allPlayers.set(p.steamId, { name: p.name, id: p.steamId });
     }
   }
 

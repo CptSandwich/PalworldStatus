@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { dirname } from "path";
+
+const CALIBRATION_PATH = process.env.CALIBRATION_PATH ?? "/app/data/palworld-calibration.json";
 
 const DB_PATH = process.env.DB_PATH ?? "/app/data/palworld-status.db";
 const LOCATION_DB_PATH = process.env.LOCATION_DB_PATH ?? "/app/data/palworld-location.db";
@@ -30,16 +32,7 @@ export function getLocationDb(): Database {
 }
 
 function initLocationSchema() {
-  locationDb.run(`
-    CREATE TABLE IF NOT EXISTS location_grid (
-      container_id   TEXT NOT NULL,
-      player_id      TEXT NOT NULL,
-      steam_id       TEXT,
-      character_name TEXT,
-      grid_data      BLOB NOT NULL,
-      PRIMARY KEY (container_id, player_id)
-    )
-  `);
+  // map_calibration kept for migration purposes (data is read then deleted into JSON file)
   locationDb.run(`
     CREATE TABLE IF NOT EXISTS map_calibration (
       id         INTEGER PRIMARY KEY CHECK (id = 1),
@@ -51,6 +44,75 @@ function initLocationSchema() {
       scale_y    REAL NOT NULL, offset_y   REAL NOT NULL
     )
   `);
+  migrateCalibrationFromDb();
+  migrateLocationGridToSteamId();
+}
+
+function migrateCalibrationFromDb() {
+  try { readFileSync(CALIBRATION_PATH); return; } catch { /* file absent, proceed */ }
+  try {
+    const row = locationDb.query(`SELECT * FROM map_calibration WHERE id = 1`).get() as Record<string, number> | null;
+    if (!row) return;
+    writeFileSync(CALIBRATION_PATH, JSON.stringify({
+      scaleX: row.scale_x,   offsetX: row.offset_x,
+      scaleY: row.scale_y,   offsetY: row.offset_y,
+      p1WorldX: row.p1_world_x, p1WorldY: row.p1_world_y,
+      p1FracX:  row.p1_frac_x,  p1FracY:  row.p1_frac_y,
+      p2WorldX: row.p2_world_x, p2WorldY: row.p2_world_y,
+      p2FracX:  row.p2_frac_x,  p2FracY:  row.p2_frac_y,
+    }));
+    locationDb.run(`DELETE FROM map_calibration WHERE id = 1`);
+    console.log("[db] Migrated map calibration to", CALIBRATION_PATH);
+  } catch { /* map_calibration table may not exist on fresh DB */ }
+}
+
+function migrateLocationGridToSteamId() {
+  // If old schema (player_id column) still exists, rebuild keyed by steam_id
+  const cols = locationDb.query(`PRAGMA table_info(location_grid)`).all() as { name: string }[];
+  if (cols.length > 0 && !cols.some(c => c.name === "player_id")) return; // already migrated
+
+  if (cols.length > 0) {
+    // Old table exists — merge rows by (container_id, steam_id) via bitwise OR
+    const rows = locationDb.query(
+      `SELECT container_id, steam_id, grid_data FROM location_grid WHERE steam_id IS NOT NULL`
+    ).all() as { container_id: string; steam_id: string; grid_data: Buffer }[];
+
+    const merged = new Map<string, Uint8Array>();
+    for (const row of rows) {
+      const key = `${row.container_id}\x00${row.steam_id}`;
+      const existing = merged.get(key) ?? new Uint8Array(GRID_BYTES);
+      const src = new Uint8Array(row.grid_data.buffer, row.grid_data.byteOffset, row.grid_data.byteLength);
+      for (let i = 0; i < GRID_BYTES; i++) existing[i] |= src[i];
+      merged.set(key, existing);
+    }
+    locationDb.run(`DROP TABLE location_grid`);
+    locationDb.run(`
+      CREATE TABLE location_grid (
+        container_id TEXT NOT NULL,
+        steam_id     TEXT NOT NULL,
+        grid_data    BLOB NOT NULL,
+        PRIMARY KEY (container_id, steam_id)
+      )
+    `);
+    for (const [key, grid] of merged) {
+      const nul = key.indexOf("\x00");
+      locationDb.run(
+        `INSERT INTO location_grid (container_id, steam_id, grid_data) VALUES (?, ?, ?)`,
+        [key.slice(0, nul), key.slice(nul + 1), grid]
+      );
+    }
+    console.log(`[db] Migrated location_grid to steam_id PK (${merged.size} rows)`);
+  } else {
+    // Fresh DB — create new schema directly
+    locationDb.run(`
+      CREATE TABLE IF NOT EXISTS location_grid (
+        container_id TEXT NOT NULL,
+        steam_id     TEXT NOT NULL,
+        grid_data    BLOB NOT NULL,
+        PRIMARY KEY (container_id, steam_id)
+      )
+    `);
+  }
 }
 
 function initSchema() {
@@ -483,37 +545,27 @@ export function markGridPath(
   }
 }
 
-export function getLocationGrid(containerId: string, playerId: string): Uint8Array {
+export function getLocationGrid(containerId: string, steamId: string): Uint8Array {
   const row = getLocationDb()
-    .query(`SELECT grid_data FROM location_grid WHERE container_id = ? AND player_id = ?`)
-    .get(containerId, playerId) as { grid_data: Buffer } | null;
+    .query(`SELECT grid_data FROM location_grid WHERE container_id = ? AND steam_id = ?`)
+    .get(containerId, steamId) as { grid_data: Buffer } | null;
   if (!row?.grid_data) return new Uint8Array(GRID_BYTES);
   return new Uint8Array(row.grid_data.buffer, row.grid_data.byteOffset, row.grid_data.byteLength);
 }
 
-export function saveLocationGrid(
-  containerId: string, playerId: string,
-  steamId: string, characterName: string,
-  grid: Uint8Array
-): void {
+export function saveLocationGrid(containerId: string, steamId: string, grid: Uint8Array): void {
   getLocationDb().run(
-    `INSERT INTO location_grid (container_id, player_id, steam_id, character_name, grid_data)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(container_id, player_id) DO UPDATE SET
-       steam_id = excluded.steam_id,
-       character_name = excluded.character_name,
-       grid_data = excluded.grid_data`,
-    [containerId, playerId, steamId, characterName, grid]
+    `INSERT INTO location_grid (container_id, steam_id, grid_data) VALUES (?, ?, ?)
+     ON CONFLICT(container_id, steam_id) DO UPDATE SET grid_data = excluded.grid_data`,
+    [containerId, steamId, grid]
   );
 }
 
-export function getAllLocationGrids(containerId: string): {
-  playerId: string; steamId: string; characterName: string | null; gridData: Buffer
-}[] {
+export function getAllLocationGrids(containerId: string): { steamId: string; gridData: Buffer }[] {
   const rows = getLocationDb()
-    .query(`SELECT player_id, steam_id, character_name, grid_data FROM location_grid WHERE container_id = ?`)
-    .all(containerId) as { player_id: string; steam_id: string; character_name: string | null; grid_data: Buffer }[];
-  return rows.map(r => ({ playerId: r.player_id, steamId: r.steam_id, characterName: r.character_name, gridData: r.grid_data }));
+    .query(`SELECT steam_id, grid_data FROM location_grid WHERE container_id = ?`)
+    .all(containerId) as { steam_id: string; grid_data: Buffer }[];
+  return rows.map(r => ({ steamId: r.steam_id, gridData: r.grid_data }));
 }
 
 // ── Map calibration ────────────────────────────────────────────────────────────
@@ -526,16 +578,7 @@ export interface MapCalibData {
 }
 
 export function getMapCalibration(): MapCalibData | null {
-  const row = getLocationDb().query(`SELECT * FROM map_calibration WHERE id = 1`).get() as Record<string, number> | null;
-  if (!row) return null;
-  return {
-    scaleX: row.scale_x,   offsetX: row.offset_x,
-    scaleY: row.scale_y,   offsetY: row.offset_y,
-    p1WorldX: row.p1_world_x, p1WorldY: row.p1_world_y,
-    p1FracX:  row.p1_frac_x,  p1FracY:  row.p1_frac_y,
-    p2WorldX: row.p2_world_x, p2WorldY: row.p2_world_y,
-    p2FracX:  row.p2_frac_x,  p2FracY:  row.p2_frac_y,
-  };
+  try { return JSON.parse(readFileSync(CALIBRATION_PATH, "utf8")); } catch { return null; }
 }
 
 export function saveMapCalibration(
@@ -544,27 +587,15 @@ export function saveMapCalibration(
   scaleX: number, offsetX: number,
   scaleY: number, offsetY: number,
 ) {
-  getLocationDb().run(
-    `INSERT INTO map_calibration
-       (id, p1_world_x, p1_world_y, p1_frac_x, p1_frac_y,
-            p2_world_x, p2_world_y, p2_frac_x, p2_frac_y,
-            scale_x, offset_x, scale_y, offset_y)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       p1_world_x=excluded.p1_world_x, p1_world_y=excluded.p1_world_y,
-       p1_frac_x=excluded.p1_frac_x,   p1_frac_y=excluded.p1_frac_y,
-       p2_world_x=excluded.p2_world_x, p2_world_y=excluded.p2_world_y,
-       p2_frac_x=excluded.p2_frac_x,   p2_frac_y=excluded.p2_frac_y,
-       scale_x=excluded.scale_x, offset_x=excluded.offset_x,
-       scale_y=excluded.scale_y, offset_y=excluded.offset_y`,
-    [p1.worldX, p1.worldY, p1.fracX, p1.fracY,
-     p2.worldX, p2.worldY, p2.fracX, p2.fracY,
-     scaleX, offsetX, scaleY, offsetY],
-  );
+  writeFileSync(CALIBRATION_PATH, JSON.stringify({
+    scaleX, offsetX, scaleY, offsetY,
+    p1WorldX: p1.worldX, p1WorldY: p1.worldY, p1FracX: p1.fracX, p1FracY: p1.fracY,
+    p2WorldX: p2.worldX, p2WorldY: p2.worldY, p2FracX: p2.fracX, p2FracY: p2.fracY,
+  }));
 }
 
 export function clearMapCalibration() {
-  getLocationDb().run(`DELETE FROM map_calibration WHERE id = 1`);
+  try { unlinkSync(CALIBRATION_PATH); } catch { /* already gone */ }
 }
 
 // ── Container meta (persisted version / server name) ─────────────────────────

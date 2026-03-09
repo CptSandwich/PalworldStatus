@@ -220,8 +220,8 @@ app.get("/api/status", requireWhitelisted, async (c) => {
             if (p.accountName) upsertPlayerAuth(p.userId, p.accountName);
 
             // Track location history (grid-based, with teleport detection + path interpolation)
-            if (p.location_x !== undefined && p.location_y !== undefined && p.playerId) {
-              const key = `${container.id}:${p.playerId}`;
+            if (p.location_x !== undefined && p.location_y !== undefined && p.userId) {
+              const key = `${container.id}:${p.userId}`;
               const last = lastGridPositions.get(key);
               const { col: newCol, row: newRow } = worldToGridCoords(p.location_x, p.location_y);
 
@@ -231,7 +231,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
               const dist = last ? Math.sqrt(dx * dx + dy * dy) : 0;
 
               if (!last || last.col !== newCol || last.row !== newRow) {
-                const grid = getLocationGrid(container.id, p.playerId);
+                const grid = getLocationGrid(container.id, p.userId);
                 if (!last) {
                   markGridPath(grid, newCol, newRow, newCol, newRow, CLOUD_RADIUS_CELLS);
                 } else {
@@ -246,7 +246,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
                     markGridPath(grid, last.col, last.row, newCol, newRow, CLOUD_RADIUS_CELLS);
                   }
                 }
-                saveLocationGrid(container.id, p.playerId, p.userId, p.name, grid);
+                saveLocationGrid(container.id, p.userId, grid);
               }
 
               const updatedSpeeds = last ? [...last.recentSpeeds.slice(-1), dist] : [];
@@ -756,12 +756,14 @@ app.get("/api/containers/:id/chat-log", requireWhitelisted, (c) => {
 // ── Location history ──────────────────────────────────────────────────────────
 
 app.get("/api/containers/:id/location-history", requireWhitelisted, (c) => {
-  const grids = getAllLocationGrids(c.req.param("id"));
+  const containerId = c.req.param("id");
+  const grids = getAllLocationGrids(containerId);
+  const serverNames = getAllPlayerServerNames().filter(s => s.container_id === containerId);
+  const nameMap = new Map(serverNames.map(s => [s.steam_id, s.character_name]));
   return c.json({
     players: grids.map(g => ({
-      playerId:      g.playerId,
       steamId:       g.steamId,
-      characterName: g.characterName,
+      characterName: nameMap.get(g.steamId) ?? null,
       gridData:      Buffer.from(g.gridData).toString("base64"),
     })),
   });
