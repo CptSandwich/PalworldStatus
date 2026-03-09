@@ -11,6 +11,7 @@ let mapCalibration = null;
 let lastStatus = null;
 let pollTimer = null;
 const pmExpandedIds = new Set(); // steam IDs whose PM sub-rows should stay expanded
+const pmWasOnline = new Set();   // steam IDs that were online in the previous render
 const POLL_INTERVAL_MS = 10_000;
 
 // Detail page state
@@ -308,7 +309,9 @@ function renderLandingPage() {
     pmHead.appendChild(pmHeadRow);
     pmTable.appendChild(pmHead);
     pmTable.appendChild(el("tbody", { id: "players-body" }));
-    pmSection.appendChild(pmTable);
+    const pmWrap = el("div", { class: "table-scroll-wrap" });
+    pmWrap.appendChild(pmTable);
+    pmSection.appendChild(pmWrap);
     root.appendChild(pmSection);
     fetchAndRenderPlayers();
 
@@ -1913,13 +1916,23 @@ async function fetchAndRenderPlayers() {
     const STATUS_CLASS  = { pending: "status-badge--pending", blacklisted: "status-badge--blacklisted", whitelisted: "status-badge--whitelisted" };
     const COL_COUNT = 7; // expand + Steam Name + Steam ID + First Seen + Last Seen + Last Server + Access
 
+    // Transition-based auto-expand/collapse (only on status change, not every render)
+    for (const p of sorted) {
+      const isOnlineNow = (onlineMap.get(p.steam_id) ?? []).length > 0;
+      const wasOnline = pmWasOnline.has(p.steam_id);
+      if (isOnlineNow && !wasOnline) {
+        pmExpandedIds.add(p.steam_id);
+        pmWasOnline.add(p.steam_id);
+      } else if (!isOnlineNow && wasOnline) {
+        pmExpandedIds.delete(p.steam_id);
+        pmWasOnline.delete(p.steam_id);
+      }
+    }
+
     for (const p of sorted) {
       const onlineEntries = onlineMap.get(p.steam_id) ?? [];
       const isOnline = onlineEntries.length > 0;
       const hasServerNames = p.serverNames.length > 0;
-
-      // Auto-add online players to the expanded set; never auto-remove
-      if (isOnline) pmExpandedIds.add(p.steam_id);
       const isExpanded = pmExpandedIds.has(p.steam_id);
 
       // ── Main row ──
@@ -1976,7 +1989,10 @@ async function fetchAndRenderPlayers() {
         const onlineContainerIds = new Set(onlineEntries.map(e => e.containerId));
         const isAdminRow = p.steam_id === currentUser?.steamId;
 
-        for (const sn of p.serverNames) {
+        const sortedServerNames = [...p.serverNames].sort((a, b) =>
+          (onlineContainerIds.has(b.container_id) ? 1 : 0) - (onlineContainerIds.has(a.container_id) ? 1 : 0)
+        );
+        for (const sn of sortedServerNames) {
           const serverOnline = onlineContainerIds.has(sn.container_id);
           const subServerId = containerIdToServerId.get(sn.container_id);
           const subTr = el("tr", { class: "pm-subrow" });
