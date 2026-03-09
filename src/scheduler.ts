@@ -24,6 +24,7 @@ import {
   resetScheduleWarnings,
   updateSentWarnings,
   logAudit,
+  insertChatMessage,
 } from "./db.js";
 import { getContainerIP, restartContainer, discoverPalworldContainers } from "./docker.js";
 import { broadcast, gracefulStop } from "./palworld.js";
@@ -120,6 +121,7 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
       const ip = await getContainerIP(containerId);
       if (ip) {
         await gracefulStop(ip, c.restPort, c.restPassword, "Scheduled server restart.");
+        insertChatMessage(containerId, null, "Scheduled server restart.");
         await new Promise((res) => setTimeout(res, 3000));
       }
 
@@ -185,6 +187,7 @@ function scheduleWarnings(
         if (!ip) return;
 
         await broadcast(ip, c.restPort, c.restPassword, w.message);
+        insertChatMessage(containerId, null, w.message);
 
         // Record that we sent this warning
         const current = getAllSchedules().find((s) => s.container_id === containerId);

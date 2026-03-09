@@ -18,6 +18,7 @@ import {
   clearIdleSince,
   getAllArmedIdleStates,
   logAudit,
+  insertChatMessage,
 } from "./db.js";
 import { getContainerIP, stopContainer } from "./docker.js";
 import { broadcast, gracefulStop } from "./palworld.js";
@@ -113,6 +114,7 @@ export async function updateIdleState(
       clearIdleSince(containerId);
       await broadcast(containerIp, t.restPort, t.restPassword,
         "Welcome! Idle shutdown cancelled — players are online.");
+      insertChatMessage(t.containerId, null, "Welcome! Idle shutdown cancelled — players are online.");
     }
   } else {
     // No players — start countdown if not already running
@@ -144,6 +146,7 @@ export async function cancelIdleManual(containerId: string, containerIp: string)
   if (t) {
     await broadcast(containerIp, t.restPort, t.restPassword,
       "Idle shutdown cancelled by admin.");
+    insertChatMessage(containerId, null, "Idle shutdown cancelled by admin.");
   }
 }
 
@@ -185,6 +188,7 @@ function startIdleCountdown(t: IdleTracker, containerIp: string) {
   void broadcast(containerIp, t.restPort, t.restPassword,
     `No players online. Server will shut down in ${ttlMin} minutes if no one connects.`
   );
+  insertChatMessage(t.containerId, null, `No players online. Server will shut down in ${ttlMin} minutes if no one connects.`);
   t.warningsFired.add("0");
 
   // T+5 min warning
@@ -194,6 +198,7 @@ function startIdleCountdown(t: IdleTracker, containerIp: string) {
       void broadcast(containerIp, t.restPort, t.restPassword,
         `Server shutting down in ${ttlMin - 5} minutes (inactive).`
       );
+      insertChatMessage(t.containerId, null, `Server shutting down in ${ttlMin - 5} minutes (inactive).`);
       t.warningsFired.add("5");
     }, 5 * 60_000);
   }
@@ -205,6 +210,7 @@ function startIdleCountdown(t: IdleTracker, containerIp: string) {
       void broadcast(containerIp, t.restPort, t.restPassword,
         "Server shutting down in 1 minute (inactive)."
       );
+      insertChatMessage(t.containerId, null, "Server shutting down in 1 minute (inactive).");
       t.warningsFired.add("9");
     }, (t.idleShutdownMs - 60_000));
   }
@@ -235,6 +241,7 @@ async function executeIdleShutdown(t: IdleTracker, containerIp: string) {
 
   await gracefulStop(containerIp, t.restPort, t.restPassword,
     "Server is shutting down (no players).");
+  insertChatMessage(t.containerId, null, "Server is shutting down (no players).");
 
   // Give the game server a moment to process the stop command
   await new Promise((res) => setTimeout(res, 3000));

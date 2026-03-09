@@ -332,6 +332,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     if (ip) {
       await broadcast(ip, container.restPort, container.restPassword,
         "Server is restarting now.");
+      insertChatMessage(containerId, null, "Server is restarting now.");
       await new Promise((res) => setTimeout(res, 1000));
     }
     await restartContainer(containerId);
@@ -399,6 +400,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     if (currentPlayers !== null && currentPlayers.length === 0) {
       if (ip) {
         await broadcast(ip, container.restPort, container.restPassword, "Server is restarting now.");
+        insertChatMessage(containerId, null, "Server is restarting now.");
         await new Promise((res) => setTimeout(res, 1000));
       }
       await restartContainer(containerId);
@@ -422,6 +424,8 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     if (ip) {
       await broadcast(ip, container.restPort, container.restPassword,
         `${user.displayName} has initiated a server restart. Restarting in ${WHITELISTED_RESTART_MINUTES} minutes. ${VETO_HINT}`);
+      insertChatMessage(containerId, null,
+        `${user.displayName} has initiated a server restart. Restarting in ${WHITELISTED_RESTART_MINUTES} minutes.`);
     }
 
     // Warning broadcasts
@@ -436,6 +440,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
             const label = off >= 1 ? `${off} minute${off === 1 ? "" : "s"}` : "30 seconds";
             await broadcast(lip, container.restPort, container.restPassword,
               `Server restarting in ${label}. ${VETO_HINT}`);
+            insertChatMessage(containerId, null, `Server restarting in ${label}.`);
           }
         }, delay));
       }
@@ -447,6 +452,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       const lip = await getContainerIP(containerId);
       if (lip) {
         await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now.");
+        insertChatMessage(containerId, null, "Server is restarting now.");
         await new Promise((res) => setTimeout(res, 3000));
       }
       await restartContainer(containerId);
@@ -475,6 +481,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       if (lip) {
         await broadcast(lip, container.restPort, container.restPassword,
           `Server restart cancelled — ${playerName} voted to veto.`);
+        insertChatMessage(containerId, null, `Server restart cancelled — ${playerName} voted to veto.`);
       }
       logAudit("RESTART_VETOED", {
         steamId: user.steamId,
@@ -496,6 +503,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       // Server became empty — restart immediately
       cancelTimedAction(containerId);
       await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now (all players disconnected).");
+      insertChatMessage(containerId, null, "Server is restarting now (all players disconnected).");
       await new Promise((res) => setTimeout(res, 3000));
       await restartContainer(containerId);
       recordExecution();
@@ -557,6 +565,7 @@ app.post("/api/containers/:id/stop", requireAdmin, async (c) => {
   if (ip) {
     await broadcast(ip, container.restPort, container.restPassword,
       "Server is shutting down now.");
+    insertChatMessage(containerId, null, "Server is shutting down now.");
     await new Promise((res) => setTimeout(res, 1000));
   }
 
@@ -669,8 +678,9 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
     pendingTimedActions.delete(containerId);
     const ip = await getContainerIP(containerId);
     if (ip) {
-      await gracefulStop(ip, container.restPort, container.restPassword,
-        `Server is ${body.action === "restart" ? "restarting" : "shutting down"} now.`);
+      const finalMsg = `Server is ${body.action === "restart" ? "restarting" : "shutting down"} now.`;
+      await gracefulStop(ip, container.restPort, container.restPassword, finalMsg);
+      insertChatMessage(containerId, null, finalMsg);
       await new Promise((res) => setTimeout(res, 3000));
     }
     if (body.action === "restart") {
@@ -704,6 +714,7 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
         const ip = await getContainerIP(containerId);
         if (!ip) return;
         await broadcast(ip, container.restPort, container.restPassword, msg);
+        insertChatMessage(containerId, null, msg);
       }, delay);
       timers.push(timer);
     }
