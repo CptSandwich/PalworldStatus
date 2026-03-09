@@ -1124,13 +1124,11 @@ a:hover { color: var(--accent-hover); }
 /* ── Player management expandable rows ──────────────────────────────────────── */
 
 #players-table { table-layout: fixed; }
-
-.pm-row--online td { background: rgba(62, 207, 207, 0.05); }
+#players-table td { background: transparent !important; }
 
 .pm-subrow td {
   padding: 2px 0;
   border-top: none !important;
-  background: rgba(255,255,255,0.04) !important;
 }
 
 .pm-subrow-content {

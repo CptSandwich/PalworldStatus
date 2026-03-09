@@ -1861,6 +1861,26 @@ async function fetchAndRenderAuditLog() {
 
 // ── Player management ─────────────────────────────────────────────────────────
 
+function reapplyPmRowColors() {
+  const tbody = document.getElementById("players-body");
+  if (!tbody) return;
+  let visIdx = 0;
+  let parentBg = "";
+  for (const tr of tbody.querySelectorAll("tr")) {
+    if (tr.hidden) { tr.style.background = ""; continue; }
+    if (tr.classList.contains("pm-subrow")) {
+      tr.style.background = parentBg;
+    } else {
+      const bg = tr.classList.contains("pm-row--online")
+        ? "rgba(62,207,207,0.05)"
+        : visIdx % 2 === 1 ? "var(--bg-panel-alt)" : "";
+      tr.style.background = bg;
+      parentBg = bg;
+      visIdx++;
+    }
+  }
+}
+
 async function fetchAndRenderPlayers() {
   try {
     const res = await fetch("/api/known-players");
@@ -1918,6 +1938,7 @@ async function fetchAndRenderPlayers() {
           if (expanded) pmExpandedIds.delete(p.steam_id);
           else pmExpandedIds.add(p.steam_id);
           subRows.forEach(r => { r.hidden = expanded; });
+          reapplyPmRowColors();
         };
         chevronTd.appendChild(chevron);
       }
@@ -2003,6 +2024,7 @@ async function fetchAndRenderPlayers() {
         }
       }
     }
+    reapplyPmRowColors();
   } catch { }
 }
 
