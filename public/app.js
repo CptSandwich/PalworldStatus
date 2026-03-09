@@ -464,7 +464,7 @@ function buildServerCard(s) {
   const footer = el("div", { class: "server-card-footer" });
   const _isAdmin = isAdmin();
   if (gameStatus === "online" || gameStatus === "crashed" || gameStatus === "starting") {
-    const restartBtn = el("button", { class: "btn btn-small" }, "↺ Restart");
+    const restartBtn = el("button", { class: "btn btn-small btn-warning" }, "↺ Restart");
     restartBtn.onclick = (e) => { e.stopPropagation(); doContainerAction(s.id, "restart", s.name, restartBtn); };
     footer.appendChild(restartBtn);
     if (_isAdmin) {
@@ -800,7 +800,7 @@ function buildTimedActionPanel(root, s) {
     panel.appendChild(minsInput);
     panel.appendChild(el("span", { style: "color:var(--text-secondary);font-size:13px" }, " minutes:"));
 
-    const restartBtn = el("button", { class: "btn btn-small" }, "↺ Restart");
+    const restartBtn = el("button", { class: "btn btn-small btn-warning" }, "↺ Restart");
     restartBtn.onclick = () => doTimedAction(s.id, "restart", parseInt(minsInput.value) || 0, restartBtn);
     panel.appendChild(restartBtn);
 
@@ -884,7 +884,7 @@ function buildWhitelistedRestartPanel(root, s, gameStatus) {
       `Restart pending: ${mins}:${String(ss).padStart(2, "0")}`
     ));
   } else {
-    const restartBtn = el("button", { class: "btn btn-small" }, "↺ Restart");
+    const restartBtn = el("button", { class: "btn btn-small btn-warning" }, "↺ Restart");
     restartBtn.onclick = () => doContainerAction(s.id, "restart", s.name, restartBtn);
     panel.appendChild(restartBtn);
     panel.appendChild(el("span", { style: "color:var(--text-secondary);font-size:13px;margin-left:8px" },

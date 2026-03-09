@@ -576,6 +576,16 @@ a:hover { color: var(--accent-hover); }
   color: var(--bg-base);
 }
 
+.btn-warning {
+  border-color: var(--status-starting);
+  color: var(--status-starting);
+}
+
+.btn-warning:hover {
+  background: var(--status-starting);
+  color: var(--bg-base);
+}
+
 /* ── Detail page ───────────────────────────────────────────────────────────── */
 
 .detail-header {

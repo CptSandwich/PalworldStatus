@@ -102,6 +102,11 @@ const apiNameCache = new Map<string, string>();
 const containerFirstRunningAt = new Map<string, number>();
 const GAME_STARTUP_GRACE_MS = 2 * 60_000; // 2 minutes
 
+// Containers that have had at least one successful REST API response this session.
+// Used to skip the startup grace period when REST goes away (shutdown/crash), so
+// the server never briefly shows "Starting" after it was already "Online".
+const containerWasOnline = new Set<string>();
+
 app.get("/api/status", requireWhitelisted, async (c) => {
   const containers = await discoverPalworldContainers();
 
@@ -117,8 +122,9 @@ app.get("/api/status", requireWhitelisted, async (c) => {
       });
 
       if (container.status !== "running") {
-        // Container stopped/restarting — clear grace period and crash guard
+        // Container stopped/restarting — clear grace period tracking and crash guard
         containerFirstRunningAt.delete(container.id);
+        containerWasOnline.delete(container.id); // reset so next startup gets grace period
         notifyStopped(container.id);
         return {
           id: container.id,
@@ -160,7 +166,15 @@ app.get("/api/status", requireWhitelisted, async (c) => {
       if (info) {
         gameStatus = "online";
         containerFirstRunningAt.delete(container.id); // grace period no longer needed
+        containerWasOnline.add(container.id);
         notifyOnline(container.id);
+      } else if (containerWasOnline.has(container.id)) {
+        // Container was previously online — REST going away means shutdown or crash, not startup
+        gameStatus = "crashed";
+        if (ip) {
+          console.warn(`[status] ${container.name} → gameStatus=crashed (REST API gone after prior online state)`);
+          notifyCrashed(container.id, container.name);
+        }
       } else {
         const startedAt = containerFirstRunningAt.get(container.id) ?? Date.now();
         const elapsed = Date.now() - startedAt;
