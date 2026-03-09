@@ -53,7 +53,7 @@ import {
   recoverIdleStates,
 } from "./idle.js";
 import { initScheduler, reloadSchedule, cancelJob } from "./scheduler.js";
-import { initChatLogStreams, startChatLogStream } from "./chatlog.js";
+import { initChatLogStreams, startChatLogStream, registerChatHandler, unregisterChatHandler } from "./chatlog.js";
 import { MAP_CALIBRATION } from "./map.js";
 import { notifyCrashed, notifyOnline, notifyStopped, getCrashGuardInfo } from "./crashguard.js";
 
@@ -344,8 +344,18 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     // Whitelisted user: 5-minute delayed restart via timed-action machinery
     const WHITELISTED_RESTART_MINUTES = 5;
 
-    // Rate limiting: max 2 restarts per 24h, min 15 min gap between requests
     const now = Date.now();
+
+    // Veto cooldown: user's last restart was vetoed — 15-min wait, doesn't count toward quota
+    const vetoCooldownSince = whitelistVetoCooldown.get(user.steamId);
+    if (vetoCooldownSince && now - vetoCooldownSince < WHITELIST_COOLDOWN_MS) {
+      const waitMins = Math.ceil((WHITELIST_COOLDOWN_MS - (now - vetoCooldownSince)) / 60_000);
+      return c.json({
+        error: `Your last restart request was cancelled. Please wait ${waitMins} more minute${waitMins !== 1 ? "s" : ""} before requesting another restart, or another user can initiate the restart immediately.`,
+      }, 429);
+    }
+
+    // Daily quota: only counts restarts that actually executed
     const history = (whitelistRestartHistory.get(user.steamId) ?? [])
       .filter(ts => now - ts < WHITELIST_WINDOW_MS);
 
@@ -359,6 +369,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       }, 429);
     }
 
+    // Cooldown between executed restarts
     if (history.length > 0) {
       const lastTs = Math.max(...history);
       const cooldownRemaining = WHITELIST_COOLDOWN_MS - (now - lastTs);
@@ -370,20 +381,46 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       }
     }
 
-    // Record this restart attempt before scheduling
-    history.push(now);
-    whitelistRestartHistory.set(user.steamId, history);
+    // Helper: record a restart execution in the quota history
+    const recordExecution = () => {
+      const h = (whitelistRestartHistory.get(user.steamId) ?? [])
+        .filter(ts => Date.now() - ts < WHITELIST_WINDOW_MS);
+      h.push(Date.now());
+      whitelistRestartHistory.set(user.steamId, h);
+    };
 
     cancelTimedAction(containerId);
 
+    const ip = await getContainerIP(containerId);
+
+    // If server is empty right now, restart immediately — no countdown needed
+    const currentPlayers = ip ? await getPlayers(ip, container.restPort, container.restPassword) : null;
+    if (currentPlayers !== null && currentPlayers.length === 0) {
+      if (ip) {
+        await broadcast(ip, container.restPort, container.restPassword, "Server is restarting now.");
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      await restartContainer(containerId);
+      recordExecution();
+      logAudit("RESTART", {
+        steamId: user.steamId,
+        displayName: user.displayName,
+        containerName: apiNameCache.get(containerId) ?? container.name,
+        details: "immediate (server empty)",
+      });
+      return c.json({ ok: true });
+    }
+
+    // Players online — schedule 5-minute countdown with veto support
     const executeAt = Date.now() + WHITELISTED_RESTART_MINUTES * 60_000;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    const ip = await getContainerIP(containerId);
+
+    const VETO_HINT = "Type /veto in chat to cancel. Restart will proceed immediately if all players disconnect.";
 
     // Initial broadcast naming the initiator
     if (ip) {
       await broadcast(ip, container.restPort, container.restPassword,
-        `${user.displayName} has initiated a server restart. Restarting in ${WHITELISTED_RESTART_MINUTES} minutes.`);
+        `${user.displayName} has initiated a server restart. Restarting in ${WHITELISTED_RESTART_MINUTES} minutes. ${VETO_HINT}`);
     }
 
     // Warning broadcasts
@@ -397,13 +434,14 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
           if (lip) {
             const label = off >= 1 ? `${off} minute${off === 1 ? "" : "s"}` : "30 seconds";
             await broadcast(lip, container.restPort, container.restPassword,
-              `Server restarting in ${label}.`);
+              `Server restarting in ${label}. ${VETO_HINT}`);
           }
         }, delay));
       }
     }
 
     const mainTimer = setTimeout(async () => {
+      if (!pendingTimedActions.has(containerId)) return; // veto/poll already acted
       pendingTimedActions.delete(containerId);
       const lip = await getContainerIP(containerId);
       if (lip) {
@@ -411,6 +449,7 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
         await new Promise((res) => setTimeout(res, 3000));
       }
       await restartContainer(containerId);
+      recordExecution();
       logAudit("RESTART", {
         steamId: user.steamId,
         displayName: user.displayName,
@@ -420,7 +459,54 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     }, WHITELISTED_RESTART_MINUTES * 60_000);
     timers.push(mainTimer);
 
-    pendingTimedActions.set(containerId, { action: "restart", scheduledAt: Date.now(), executeAt, timers });
+    pendingTimedActions.set(containerId, {
+      action: "restart", scheduledAt: Date.now(), executeAt, timers,
+      vetoable: true, pollInterval: null, chatHandler: null,
+    });
+
+    // Chat handler: one /veto immediately cancels the restart
+    const chatHandler = async (playerName: string, message: string) => {
+      if (message.trim().toLowerCase() !== "/veto") return;
+      if (!pendingTimedActions.get(containerId)?.vetoable) return;
+      cancelTimedAction(containerId);
+      whitelistVetoCooldown.set(user.steamId, Date.now());
+      const lip = await getContainerIP(containerId);
+      if (lip) {
+        await broadcast(lip, container.restPort, container.restPassword,
+          `Server restart cancelled — ${playerName} voted to veto.`);
+      }
+      logAudit("RESTART_VETOED", {
+        steamId: user.steamId,
+        displayName: user.displayName,
+        containerName: apiNameCache.get(containerId) ?? container.name,
+        details: `vetoed by ${playerName}`,
+      });
+    };
+    registerChatHandler(containerId, chatHandler);
+    pendingTimedActions.get(containerId)!.chatHandler = chatHandler;
+
+    // Poll every 30s: restart immediately if server becomes empty
+    const pollInterval = setInterval(async () => {
+      if (!pendingTimedActions.has(containerId)) { clearInterval(pollInterval); return; }
+      const lip = await getContainerIP(containerId);
+      if (!lip) return;
+      const livePlayers = await getPlayers(lip, container.restPort, container.restPassword);
+      if (!livePlayers || livePlayers.length > 0) return;
+      // Server became empty — restart immediately
+      cancelTimedAction(containerId);
+      await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now (all players disconnected).");
+      await new Promise((res) => setTimeout(res, 3000));
+      await restartContainer(containerId);
+      recordExecution();
+      logAudit("RESTART", {
+        steamId: user.steamId,
+        displayName: user.displayName,
+        containerName: apiNameCache.get(containerId) ?? container.name,
+        details: "immediate (all players disconnected during countdown)",
+      });
+    }, 30_000);
+    pendingTimedActions.get(containerId)!.pollInterval = pollInterval;
+
     logAudit("RESTART_SCHEDULED", {
       steamId: user.steamId,
       displayName: user.displayName,
@@ -532,6 +618,10 @@ interface TimedAction {
   scheduledAt: number;
   executeAt: number;
   timers: ReturnType<typeof setTimeout>[];
+  // Whitelisted-restart veto tracking (not set for admin timed actions)
+  vetoable?: boolean;
+  pollInterval?: ReturnType<typeof setInterval> | null;         // polls for empty server
+  chatHandler?: ((playerName: string, message: string) => void) | null;
 }
 const pendingTimedActions = new Map<string, TimedAction>();
 
@@ -539,8 +629,10 @@ const pendingTimedActions = new Map<string, TimedAction>();
 const WHITELIST_MAX_RESTARTS = 2;
 const WHITELIST_WINDOW_MS    = 24 * 60 * 60_000; // 24 hours
 const WHITELIST_COOLDOWN_MS  = 15 * 60_000;       // 15 min gap between restarts
-// steamId → timestamps of scheduled restarts within the current window
+// steamId → timestamps of restarts that actually executed within the current window
 const whitelistRestartHistory = new Map<string, number[]>();
+// steamId → timestamp when their restart was vetoed (cooldown, does not count toward quota)
+const whitelistVetoCooldown = new Map<string, number>();
 
 function getPendingTimedAction(containerId: string) {
   const ta = pendingTimedActions.get(containerId);
@@ -647,6 +739,8 @@ function cancelTimedAction(containerId: string) {
   const ta = pendingTimedActions.get(containerId);
   if (!ta) return;
   for (const t of ta.timers) clearTimeout(t);
+  if (ta.pollInterval) clearInterval(ta.pollInterval);
+  if (ta.chatHandler) unregisterChatHandler(containerId, ta.chatHandler);
   pendingTimedActions.delete(containerId);
 }
 

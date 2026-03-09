@@ -30,13 +30,31 @@ const CHAT_PATTERNS: RegExp[] = [
 // Keep track of active streams so we can clean up
 const activeStreams = new Map<string, NodeJS.ReadableStream>();
 
+// Registered callbacks for incoming chat messages, keyed by containerId
+type ChatHandler = (playerName: string, message: string) => void;
+const chatHandlers = new Map<string, Set<ChatHandler>>();
+
+export function registerChatHandler(containerId: string, fn: ChatHandler): void {
+  if (!chatHandlers.has(containerId)) chatHandlers.set(containerId, new Set());
+  chatHandlers.get(containerId)!.add(fn);
+}
+
+export function unregisterChatHandler(containerId: string, fn: ChatHandler): void {
+  chatHandlers.get(containerId)?.delete(fn);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function processLogLine(containerId: string, line: string) {
   for (const pattern of CHAT_PATTERNS) {
     const m = line.match(pattern);
     if (m) {
-      insertChatMessage(containerId, m[1].trim(), m[2].trim());
+      const playerName = m[1].trim();
+      const message    = m[2].trim();
+      insertChatMessage(containerId, playerName, message);
+      for (const fn of chatHandlers.get(containerId) ?? []) {
+        fn(playerName, message);
+      }
       return;
     }
   }
