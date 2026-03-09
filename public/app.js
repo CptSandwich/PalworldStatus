@@ -918,8 +918,12 @@ function buildWhitelistedRestartPanel(root, s, gameStatus) {
     const restartBtn = el("button", { class: "btn btn-small btn-warning" }, "↺ Restart");
     restartBtn.onclick = () => doContainerAction(s.id, "restart", s.name, restartBtn);
     panel.appendChild(restartBtn);
-    panel.appendChild(el("span", { style: "color:var(--text-secondary);font-size:13px;margin-left:8px" },
-      "A 5-minute countdown will be broadcast in-game."
+    const hasPlayers = (s.players?.length ?? 0) > 0;
+    const hint = hasPlayers
+      ? "A 5-minute countdown will be broadcast in-game. Server will restart immediately if all in-game players disconnect. In-game players may cancel your restart with veto."
+      : "Server will restart immediately.";
+    panel.appendChild(el("span", { style: "color:var(--text-secondary);font-size:13px;margin-left:8px;display:inline-block;max-width:420px;vertical-align:top;line-height:1.4" },
+      hint
     ));
   }
 
