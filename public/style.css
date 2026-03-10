@@ -1136,7 +1136,7 @@ a:hover { color: var(--accent-hover); }
 #players-table td { background: transparent !important; }
 
 .pm-subrow td {
-  padding: 2px 0;
+  padding: 0;
   border-top: none !important;
 }
 
@@ -1146,7 +1146,7 @@ a:hover { color: var(--accent-hover); }
   gap: 6px;
   font-size: 0.8rem;
   color: var(--text-secondary);
-  padding: 2px 8px !important;
+  padding: 2px 8px;
   white-space: nowrap;
 }
 

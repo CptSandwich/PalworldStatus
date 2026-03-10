@@ -2032,21 +2032,23 @@ async function fetchAndRenderPlayers() {
           const subServerId = containerIdToServerId.get(sn.container_id);
           const subTr = el("tr", { class: "pm-subrow" });
           subTr.hidden = !isExpanded;
-          const subTd = el("td", { colspan: String(COL_COUNT), class: "pm-subrow-content" });
-          subTd.appendChild(el("span", { class: "pm-subrow-indent" }));
+          const subTd = el("td", { colspan: String(COL_COUNT) });
+          const subContent = el("div", { class: "pm-subrow-content" });
+          subTd.appendChild(subContent);
+          subContent.appendChild(el("span", { class: "pm-subrow-indent" }));
 
           const dot = el("span", { class: serverOnline ? "pm-online-dot" : "pm-offline-dot" }, "●");
-          subTd.appendChild(dot);
+          subContent.appendChild(dot);
 
           // Character name — clickable if server is in lastStatus
           if (subServerId) {
             const charLink = el("span", { class: "pm-name-link" }, sn.characterName);
             charLink.onclick = () => { location.hash = `server/${subServerId}`; };
-            subTd.appendChild(charLink);
+            subContent.appendChild(charLink);
           } else {
-            subTd.appendChild(el("span", {}, sn.characterName));
+            subContent.appendChild(el("span", {}, sn.characterName));
           }
-          subTd.appendChild(el("span", {}, ` — ${sn.containerName}`));
+          subContent.appendChild(el("span", {}, ` — ${sn.containerName}`));
 
           // Action buttons (not shown for admin's own row)
           if (!isAdminRow) {
@@ -2066,7 +2068,7 @@ async function fetchAndRenderPlayers() {
               banBtn.onclick = () => doPlayerAction(sn.container_id, p.steam_id, "ban", sn.characterName, banBtn);
               actionsDiv.appendChild(banBtn);
             }
-            subTd.appendChild(actionsDiv);
+            subContent.appendChild(actionsDiv);
           }
 
           subTr.appendChild(subTd);
