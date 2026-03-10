@@ -1118,6 +1118,7 @@ a:hover { color: var(--accent-hover); }
 .table-scroll-wrap {
   max-height: calc(20 * 38px); /* ~20 rows before scroll */
   overflow-y: auto;
+  overflow-x: auto;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
 }
@@ -1145,7 +1146,7 @@ a:hover { color: var(--accent-hover); }
   gap: 6px;
   font-size: 0.8rem;
   color: var(--text-secondary);
-  padding: 2px 8px 2px 32px !important;
+  padding: 2px 8px 2px 48px !important;
   white-space: nowrap;
 }
 
@@ -1311,6 +1312,8 @@ a:hover { color: var(--accent-hover); }
   /* Tables — allow horizontal scroll */
   .data-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .data-table th, .data-table td { padding: 6px 8px; white-space: nowrap; }
+  /* Restore table display for players table so table-layout: fixed stays active */
+  #players-table { display: table; }
 
 
   /* Schedule rows */
