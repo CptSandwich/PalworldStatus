@@ -2032,8 +2032,7 @@ async function fetchAndRenderPlayers() {
           const subServerId = containerIdToServerId.get(sn.container_id);
           const subTr = el("tr", { class: "pm-subrow" });
           subTr.hidden = !isExpanded;
-          subTr.appendChild(el("td", {}));  // chevron column (empty)
-          const subTd = el("td", { colspan: String(COL_COUNT - 1), class: "pm-subrow-content" });
+          const subTd = el("td", { colspan: String(COL_COUNT), class: "pm-subrow-content" });
 
           const dot = el("span", { class: serverOnline ? "pm-online-dot" : "pm-offline-dot" }, "●");
           subTd.appendChild(dot);

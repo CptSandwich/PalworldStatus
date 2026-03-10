@@ -1312,6 +1312,7 @@ a:hover { color: var(--accent-hover); }
   .data-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .data-table th, .data-table td { padding: 6px 8px; white-space: nowrap; }
 
+
   /* Schedule rows */
   .schedule-row { flex-wrap: wrap; }
   .schedule-name { min-width: 0; width: 100%; }
