@@ -1312,8 +1312,9 @@ a:hover { color: var(--accent-hover); }
   /* Tables — allow horizontal scroll */
   .data-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .data-table th, .data-table td { padding: 6px 8px; white-space: nowrap; }
-  /* Restore table display for players table so table-layout: fixed stays active */
-  #players-table { display: table; }
+  /* Restore table display for players table so table-layout: fixed stays active;
+     min-width prevents columns squishing on narrow screens (wrapper scrolls instead) */
+  #players-table { display: table; min-width: 640px; }
 
 
   /* Schedule rows */
