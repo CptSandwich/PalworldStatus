@@ -2033,6 +2033,7 @@ async function fetchAndRenderPlayers() {
           const subTr = el("tr", { class: "pm-subrow" });
           subTr.hidden = !isExpanded;
           const subTd = el("td", { colspan: String(COL_COUNT), class: "pm-subrow-content" });
+          subTd.appendChild(el("span", { class: "pm-subrow-indent" }));
 
           const dot = el("span", { class: serverOnline ? "pm-online-dot" : "pm-offline-dot" }, "●");
           subTd.appendChild(dot);
