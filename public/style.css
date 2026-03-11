@@ -999,13 +999,14 @@ a:hover { color: var(--accent-hover); }
   background: var(--bg-panel-alt);
   border: 1px solid var(--border-subtle);
   padding: 12px 14px;
-  max-height: 300px;
+  height: 300px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
   scrollbar-width: thin;
   scrollbar-color: var(--border-subtle) transparent;
+  margin-bottom: 32px;
 }
 
 .chat-log-empty {
@@ -1337,7 +1338,7 @@ a:hover { color: var(--accent-hover); }
   .auth-panel { padding: 24px 16px; min-width: 0; width: 92vw; }
 
   /* Chat log */
-  .chat-log { max-height: 200px; }
+  .chat-log { height: 200px; }
 }
 
 @media (max-width: 480px) {

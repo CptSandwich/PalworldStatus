@@ -114,10 +114,10 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
         return;
       }
       if (c.status !== "running") {
-        console.log(`[scheduler] Skipping restart for ${c.displayName} — container not running (status: ${c.status})`);
+        console.log(`[scheduler] Skipping restart for ${c.name} — container not running (status: ${c.status})`);
         return;
       }
-      containerName = c.displayName;
+      containerName = c.name;
 
       const ip = await getContainerIP(containerId);
       if (ip) {
@@ -130,11 +130,11 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
       await restartContainer(containerId);
 
       logAudit("SCHEDULED_RESTART", {
-        containerName: c.displayName,
+        containerName: c.name,
         details: `cron="${cronExpr}"`,
       });
 
-      console.log(`[scheduler] Restarted ${c.displayName}`);
+      console.log(`[scheduler] Restarted ${c.name}`);
 
       // Reset warnings for next cycle
       const nextRun = getNextCronDate(cronExpr);
@@ -152,7 +152,7 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
   discoverPalworldContainers()
     .then((cs) => {
       const c = cs.find((x) => x.id === containerId);
-      if (c) containerName = c.displayName;
+      if (c) containerName = c.name;
     })
     .catch(() => {});
 
