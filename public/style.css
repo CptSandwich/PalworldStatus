@@ -995,6 +995,11 @@ a:hover { color: var(--accent-hover); }
 
 /* ── Chat log ──────────────────────────────────────────────────────────────── */
 
+.chat-log-wrapper {
+  position: relative;
+  margin-bottom: 32px;
+}
+
 .chat-log {
   background: var(--bg-panel-alt);
   border: 1px solid var(--border-subtle);
@@ -1006,7 +1011,26 @@ a:hover { color: var(--accent-hover); }
   gap: 4px;
   scrollbar-width: thin;
   scrollbar-color: var(--border-subtle) transparent;
-  margin-bottom: 32px;
+}
+
+.chat-new-msg-toast {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(14, 21, 32, 0.85);
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  padding: 5px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.chat-new-msg-toast.hidden {
+  display: none;
 }
 
 .chat-log-empty {

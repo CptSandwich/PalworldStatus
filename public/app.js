@@ -13,6 +13,7 @@ let pollTimer = null;
 const pmExpandedIds = new Set(); // steam IDs whose PM sub-rows should stay expanded
 const pmWasOnline = new Set();   // steam IDs that were online in the previous render
 const POLL_INTERVAL_MS = 10_000;
+let _chatLastTs = null;          // timestamp of last seen chat message
 
 // Detail page state
 let detailContainerId = null;
@@ -1798,8 +1799,24 @@ async function buildChatLog(root, containerId) {
   chatHeader.appendChild(sysLabel);
   section.appendChild(chatHeader);
 
+  _chatLastTs = null;
+
   const logEl = el("div", { class: "chat-log", id: "chat-log" });
-  section.appendChild(logEl);
+  const chatWrapper = el("div", { class: "chat-log-wrapper" });
+  chatWrapper.appendChild(logEl);
+
+  const toast = el("div", { class: "chat-new-msg-toast hidden", id: "chat-new-msg-toast" }, "New messages received");
+  toast.addEventListener("click", () => {
+    logEl.lastElementChild?.scrollIntoView(false);
+    toast.classList.add("hidden");
+  });
+  chatWrapper.appendChild(toast);
+
+  logEl.addEventListener("scroll", () => {
+    if (isChatAtBottom(logEl)) toast.classList.add("hidden");
+  });
+
+  section.appendChild(chatWrapper);
   root.appendChild(section);
 
   await refreshChatLog(containerId);
@@ -1821,6 +1838,7 @@ async function refreshChatLog(containerId) {
     const res = await fetch(`/api/containers/${encodeURIComponent(containerId)}/chat-log?limit=100`);
     if (!res.ok) return;
     const data = await res.json();
+    const wasAtBottom = isChatAtBottom(logEl);
     logEl.innerHTML = "";
     if (!data.messages.length) {
       logEl.appendChild(el("span", { class: "chat-log-empty" }, "No messages recorded yet."));
@@ -1840,7 +1858,14 @@ async function refreshChatLog(containerId) {
       entry.appendChild(document.createTextNode(m.message));
       logEl.appendChild(entry);
     }
-    requestAnimationFrame(() => { logEl.lastElementChild?.scrollIntoView(false); });
+    const latestTs = data.messages[data.messages.length - 1].timestamp;
+    const hasNew = latestTs !== _chatLastTs;
+    _chatLastTs = latestTs;
+    if (wasAtBottom) {
+      requestAnimationFrame(() => { logEl.lastElementChild?.scrollIntoView(false); });
+    } else if (hasNew) {
+      document.getElementById("chat-new-msg-toast")?.classList.remove("hidden");
+    }
   } catch { /* silently ignore */ }
 }
 
@@ -2243,6 +2268,10 @@ function escHtml(str) {
 
 function fmtMB(mb) {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
+}
+
+function isChatAtBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 10;
 }
 
 function formatTs(ts, timeOnly = false) {
