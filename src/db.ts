@@ -550,6 +550,13 @@ export function upsertContainerMeta(
   );
 }
 
+export function getContainerServerName(containerId: string): string | null {
+  const row = getDb()
+    .query(`SELECT server_name FROM container_meta WHERE container_id = ?`)
+    .get(containerId) as { server_name: string | null } | null;
+  return row?.server_name ?? null;
+}
+
 export function getAllContainerMeta(): ContainerMeta[] {
   return getDb()
     .query(`SELECT * FROM container_meta`)

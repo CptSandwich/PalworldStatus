@@ -25,6 +25,7 @@ import {
   updateSentWarnings,
   logAudit,
   insertChatMessage,
+  getContainerServerName,
 } from "./db.js";
 import { getContainerIP, restartContainer, discoverPalworldContainers } from "./docker.js";
 import { broadcast, gracefulStop } from "./palworld.js";
@@ -130,7 +131,7 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
       await restartContainer(containerId);
 
       logAudit("SCHEDULED_RESTART", {
-        containerName: c.name,
+        containerName: getContainerServerName(containerId) ?? c.name,
         details: `cron="${cronExpr}"`,
       });
 

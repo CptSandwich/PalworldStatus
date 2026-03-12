@@ -1840,7 +1840,7 @@ async function refreshChatLog(containerId) {
       entry.appendChild(document.createTextNode(m.message));
       logEl.appendChild(entry);
     }
-    logEl.scrollTop = logEl.scrollHeight;
+    requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
   } catch { /* silently ignore */ }
 }
 
