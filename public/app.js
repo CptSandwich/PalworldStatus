@@ -1829,6 +1829,7 @@ function applySystemMessageFilter() {
   for (const entry of logEl.querySelectorAll(".chat-entry--system")) {
     entry.hidden = !show;
   }
+  if (show && isChatAtBottom(logEl)) requestAnimationFrame(() => { logEl.lastElementChild?.scrollIntoView(false); });
 }
 
 async function refreshChatLog(containerId) {
