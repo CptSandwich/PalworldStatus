@@ -114,8 +114,8 @@ export async function updateIdleState(
       cancelIdleCountdown(containerId);
       clearIdleSince(containerId);
       await broadcast(containerIp, t.restPort, t.restPassword,
-        "Welcome! Idle shutdown cancelled — players are online.");
-      insertChatMessage(t.containerId, null, "Welcome! Idle shutdown cancelled — players are online.");
+        "Oh hey, someone's here! Idle shutdown cancelled.");
+      insertChatMessage(t.containerId, null, "Oh hey, someone's here! Idle shutdown cancelled.");
     }
   } else {
     // No players — start countdown if not already running
@@ -146,8 +146,8 @@ export async function cancelIdleManual(containerId: string, containerIp: string)
   clearIdleSince(containerId);
   if (t) {
     await broadcast(containerIp, t.restPort, t.restPassword,
-      "Idle shutdown cancelled by admin.");
-    insertChatMessage(containerId, null, "Idle shutdown cancelled by admin.");
+      "Admin called off the shutdown. Carry on!");
+    insertChatMessage(containerId, null, "Admin called off the shutdown. Carry on!");
   }
 }
 
@@ -187,9 +187,9 @@ function startIdleCountdown(t: IdleTracker, containerIp: string) {
 
   // T+0: immediate broadcast
   void broadcast(containerIp, t.restPort, t.restPassword,
-    `No players online. Server will shut down in ${ttlMin} minutes if no one connects.`
+    `Looks like the server's empty. Shutting down in ${ttlMin} minutes if no one shows up.`
   );
-  insertChatMessage(t.containerId, null, `No players online. Server will shut down in ${ttlMin} minutes if no one connects.`);
+  insertChatMessage(t.containerId, null, `Looks like the server's empty. Shutting down in ${ttlMin} minutes if no one shows up.`);
   t.warningsFired.add("0");
 
   // T+5 min warning
@@ -197,9 +197,9 @@ function startIdleCountdown(t: IdleTracker, containerIp: string) {
     setTimeout(() => {
       if (t.idleStartedAt === null) return;
       void broadcast(containerIp, t.restPort, t.restPassword,
-        `Server shutting down in ${ttlMin - 5} minutes (inactive).`
+        `Still empty... shutting down in ${ttlMin - 5} minutes unless someone joins.`
       );
-      insertChatMessage(t.containerId, null, `Server shutting down in ${ttlMin - 5} minutes (inactive).`);
+      insertChatMessage(t.containerId, null, `Still empty... shutting down in ${ttlMin - 5} minutes unless someone joins.`);
       t.warningsFired.add("5");
     }, 5 * 60_000);
   }
@@ -209,9 +209,9 @@ function startIdleCountdown(t: IdleTracker, containerIp: string) {
     setTimeout(() => {
       if (t.idleStartedAt === null) return;
       void broadcast(containerIp, t.restPort, t.restPassword,
-        "Server shutting down in 1 minute (inactive)."
+        "Last call! Shutting down in 1 minute."
       );
-      insertChatMessage(t.containerId, null, "Server shutting down in 1 minute (inactive).");
+      insertChatMessage(t.containerId, null, "Last call! Shutting down in 1 minute.");
       t.warningsFired.add("9");
     }, (t.idleShutdownMs - 60_000));
   }
@@ -242,8 +242,8 @@ async function executeIdleShutdown(t: IdleTracker, containerIp: string) {
 
   notifyIntentionalShutdown(t.containerId);
   await gracefulStop(containerIp, t.restPort, t.restPassword,
-    "Server is shutting down (no players).");
-  insertChatMessage(t.containerId, null, "Server is shutting down (no players).");
+    "Server's empty. Lights out!");
+  insertChatMessage(t.containerId, null, "Server's empty. Lights out!");
 
   // Give the game server a moment to process the stop command
   await new Promise((res) => setTimeout(res, 3000));

@@ -114,6 +114,13 @@ function initSchema() {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS container_meta (
       container_id  TEXT PRIMARY KEY,
       version       TEXT,
@@ -561,4 +568,21 @@ export function getAllContainerMeta(): ContainerMeta[] {
   return getDb()
     .query(`SELECT * FROM container_meta`)
     .all() as ContainerMeta[];
+}
+
+// ── Settings ───────────────────────────────────────────────────────────────────
+
+export function getSetting(key: string): string | null {
+  const row = getDb()
+    .query(`SELECT value FROM settings WHERE key = ?`)
+    .get(key) as { value: string | null } | null;
+  return row?.value ?? null;
+}
+
+export function setSetting(key: string, value: string): void {
+  getDb().run(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, value]
+  );
 }

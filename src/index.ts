@@ -55,6 +55,7 @@ import {
   recoverIdleStates,
 } from "./idle.js";
 import { initScheduler, reloadSchedule, cancelJob } from "./scheduler.js";
+import { initUpdateChecker, updateAvailableSince, clearUpdateAvailable } from "./updater.js";
 import { initChatLogStreams, startChatLogStream, registerChatHandler, unregisterChatHandler } from "./chatlog.js";
 import { MAP_CALIBRATION } from "./map.js";
 import { notifyCrashed, notifyOnline, notifyStopped, getCrashGuardInfo, notifyIntentionalShutdown } from "./crashguard.js";
@@ -96,6 +97,9 @@ initScheduler();
 discoverPalworldContainers()
   .then((containers) => initChatLogStreams(containers))
   .catch((err) => console.warn("[startup] Chat log init failed:", err));
+
+// Start periodic Palworld update checker
+initUpdateChecker().catch((err) => console.warn("[startup] Update checker init failed:", err));
 
 // ── Hono app ──────────────────────────────────────────────────────────────────
 
@@ -294,6 +298,7 @@ app.get("/api/status", requireWhitelisted, async (c) => {
         crashGuard: getCrashGuardInfo(container.id),
         joinPassword: container.joinPassword,
         containerStats,
+        updateAvailable: !!updateAvailableSince,
       };
     })
   );
@@ -334,12 +339,13 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     const ip = await getContainerIP(containerId);
     if (ip) {
       await broadcast(ip, container.restPort, container.restPassword,
-        "Server is restarting now.");
-      insertChatMessage(containerId, null, "Server is restarting now.");
+        "Restarting now. See you on the other side!");
+      insertChatMessage(containerId, null, "Restarting now. See you on the other side!");
       await new Promise((res) => setTimeout(res, 1000));
     }
     notifyIntentionalShutdown(containerId);
     await restartContainer(containerId);
+    clearUpdateAvailable();
     logAudit("RESTART", {
       steamId: user.steamId,
       displayName: user.displayName,
@@ -403,8 +409,8 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     const currentPlayers = ip ? await getPlayers(ip, container.restPort, container.restPassword) : null;
     if (currentPlayers !== null && currentPlayers.length === 0) {
       if (ip) {
-        await broadcast(ip, container.restPort, container.restPassword, "Server is restarting now.");
-        insertChatMessage(containerId, null, "Server is restarting now.");
+        await broadcast(ip, container.restPort, container.restPassword, "Server's empty — restarting now!");
+        insertChatMessage(containerId, null, "Server's empty — restarting now!");
         await new Promise((res) => setTimeout(res, 1000));
       }
       notifyIntentionalShutdown(containerId);
@@ -423,14 +429,14 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
     const executeAt = Date.now() + WHITELISTED_RESTART_MINUTES * 60_000;
     const timers: ReturnType<typeof setTimeout>[] = [];
 
-    const VETO_HINT = "Type /veto in chat to cancel. Restart will proceed immediately if all players disconnect.";
+    const VETO_HINT = "Type /veto in chat to cancel. Restart will proceed immediately if everyone disconnects.";
 
     // Initial broadcast naming the initiator
     if (ip) {
       await broadcast(ip, container.restPort, container.restPassword,
-        `${user.displayName} has initiated a server restart. Restarting in ${WHITELISTED_RESTART_MINUTES} minutes. ${VETO_HINT}`);
+        `${user.displayName} has called for a restart in ${WHITELISTED_RESTART_MINUTES} minutes. ${VETO_HINT}`);
       insertChatMessage(containerId, null,
-        `${user.displayName} has initiated a server restart. Restarting in ${WHITELISTED_RESTART_MINUTES} minutes.`);
+        `${user.displayName} has called for a restart in ${WHITELISTED_RESTART_MINUTES} minutes.`);
     }
 
     // Warning broadcasts
@@ -444,8 +450,8 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
           if (lip) {
             const label = off >= 1 ? `${off} minute${off === 1 ? "" : "s"}` : "30 seconds";
             await broadcast(lip, container.restPort, container.restPassword,
-              `Server restarting in ${label}. ${VETO_HINT}`);
-            insertChatMessage(containerId, null, `Server restarting in ${label}.`);
+              `Restart in ${label}. ${VETO_HINT}`);
+            insertChatMessage(containerId, null, `Restart in ${label}.`);
           }
         }, delay));
       }
@@ -457,11 +463,12 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       const lip = await getContainerIP(containerId);
       if (lip) {
         notifyIntentionalShutdown(containerId);
-        await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now.");
-        insertChatMessage(containerId, null, "Server is restarting now.");
+        await gracefulStop(lip, container.restPort, container.restPassword, "Time's up! Restarting now.");
+        insertChatMessage(containerId, null, "Time's up! Restarting now.");
         await new Promise((res) => setTimeout(res, 3000));
       }
       await restartContainer(containerId);
+      clearUpdateAvailable();
       recordExecution();
       logAudit("RESTART", {
         steamId: user.steamId,
@@ -486,8 +493,8 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       const lip = await getContainerIP(containerId);
       if (lip) {
         await broadcast(lip, container.restPort, container.restPassword,
-          `Server restart cancelled — ${playerName} voted to veto.`);
-        insertChatMessage(containerId, null, `Server restart cancelled — ${playerName} voted to veto.`);
+          `${playerName} said not today! Restart cancelled.`);
+        insertChatMessage(containerId, null, `${playerName} said not today! Restart cancelled.`);
       }
       logAudit("RESTART_VETOED", {
         steamId: user.steamId,
@@ -509,8 +516,8 @@ app.post("/api/containers/:id/restart", requireWhitelisted, async (c) => {
       // Server became empty — restart immediately
       cancelTimedAction(containerId);
       notifyIntentionalShutdown(containerId);
-      await gracefulStop(lip, container.restPort, container.restPassword, "Server is restarting now (all players disconnected).");
-      insertChatMessage(containerId, null, "Server is restarting now (all players disconnected).");
+      await gracefulStop(lip, container.restPort, container.restPassword, "Everyone disconnected — restarting now!");
+      insertChatMessage(containerId, null, "Everyone disconnected — restarting now!");
       await new Promise((res) => setTimeout(res, 3000));
       await restartContainer(containerId);
       recordExecution();
@@ -571,8 +578,8 @@ app.post("/api/containers/:id/stop", requireAdmin, async (c) => {
   const ip = await getContainerIP(containerId);
   if (ip) {
     await broadcast(ip, container.restPort, container.restPassword,
-      "Server is shutting down now.");
-    insertChatMessage(containerId, null, "Server is shutting down now.");
+      "Server shutting down. Thanks for playing!");
+    insertChatMessage(containerId, null, "Server shutting down. Thanks for playing!");
     await new Promise((res) => setTimeout(res, 1000));
   }
 
@@ -687,7 +694,7 @@ app.post("/api/containers/:id/timed-action", requireAdmin, async (c) => {
     notifyIntentionalShutdown(containerId);
     const ip = await getContainerIP(containerId);
     if (ip) {
-      const finalMsg = `Server is ${body.action === "restart" ? "restarting" : "shutting down"} now.`;
+      const finalMsg = body.action === "restart" ? "Restarting now. Be right back!" : "Shutting down now. Thanks for playing!";
       await gracefulStop(ip, container.restPort, container.restPassword, finalMsg);
       insertChatMessage(containerId, null, finalMsg);
       await new Promise((res) => setTimeout(res, 3000));

@@ -388,7 +388,9 @@ function buildServerCard(s) {
 
   // Version + connection
   const meta = el("div", { class: "server-meta" });
-  meta.appendChild(el("span", { class: "server-version" }, s.version ? `v${s.version}` : "—"));
+  const versionSpan = el("span", { class: "server-version" }, s.version ? `v${s.version}` : "—");
+  meta.appendChild(versionSpan);
+  if (s.updateAvailable) meta.appendChild(el("span", { class: "update-badge" }, "Update Available"));
   if (s.connectionAddress) {
     const conn = el("div", { class: "server-connection" });
     conn.appendChild(el("span", {}, s.connectionAddress));
@@ -591,6 +593,7 @@ function _buildDetailDynamic(dyn, s, gameStatus) {
   const infoPanel = el("div", { class: "detail-panel" });
   const metaRow = el("div", { class: "server-meta" });
   metaRow.appendChild(el("span", { class: "server-version" }, s.version ? `v${s.version}` : "—"));
+  if (s.updateAvailable) metaRow.appendChild(el("span", { class: "update-badge" }, "Update Available"));
   if (s.connectionAddress) {
     const conn = el("div", { class: "server-connection" });
     conn.appendChild(el("span", {}, s.connectionAddress));
@@ -1807,7 +1810,7 @@ async function buildChatLog(root, containerId) {
 
   const toast = el("div", { class: "chat-new-msg-toast hidden", id: "chat-new-msg-toast" }, "New messages received");
   toast.addEventListener("click", () => {
-    logEl.lastElementChild?.scrollIntoView(false);
+    logEl.scrollTop = logEl.scrollHeight;
     toast.classList.add("hidden");
   });
   chatWrapper.appendChild(toast);
@@ -1826,10 +1829,11 @@ function applySystemMessageFilter() {
   const logEl = document.getElementById("chat-log");
   if (!logEl) return;
   const show = document.getElementById("chat-show-system")?.checked ?? false;
+  const wasAtBottom = isChatAtBottom(logEl);
   for (const entry of logEl.querySelectorAll(".chat-entry--system")) {
     entry.hidden = !show;
   }
-  if (show && isChatAtBottom(logEl)) requestAnimationFrame(() => { logEl.lastElementChild?.scrollIntoView(false); });
+  if (show && wasAtBottom) requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
 }
 
 async function refreshChatLog(containerId) {
@@ -1863,7 +1867,7 @@ async function refreshChatLog(containerId) {
     const hasNew = latestTs !== _chatLastTs;
     _chatLastTs = latestTs;
     if (wasAtBottom) {
-      requestAnimationFrame(() => { logEl.lastElementChild?.scrollIntoView(false); });
+      requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
     } else if (hasNew) {
       document.getElementById("chat-new-msg-toast")?.classList.remove("hidden");
     }

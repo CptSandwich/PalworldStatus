@@ -40,12 +40,12 @@ interface WarningDef {
 }
 
 const WARNINGS: WarningDef[] = [
-  { bit: 0, offsetMs: 10 * 60_000, message: "Server restarting in 10 minutes." },
-  { bit: 1, offsetMs:  5 * 60_000, message: "Server restarting in 5 minutes."  },
-  { bit: 2, offsetMs:  3 * 60_000, message: "Server restarting in 3 minutes."  },
-  { bit: 3, offsetMs:  2 * 60_000, message: "Server restarting in 2 minutes."  },
-  { bit: 4, offsetMs:  1 * 60_000, message: "Server restarting in 1 minute."   },
-  { bit: 5, offsetMs:    30_000,   message: "Server restarting in 30 seconds." },
+  { bit: 0, offsetMs: 10 * 60_000, message: "Heads up — server restart in 10 minutes. Wrap up what you're doing!" },
+  { bit: 1, offsetMs:  5 * 60_000, message: "5 minutes to restart. Time to find a safe spot!"                     },
+  { bit: 2, offsetMs:  3 * 60_000, message: "3 minutes! Maybe don't start building anything new right now."       },
+  { bit: 3, offsetMs:  2 * 60_000, message: "2 minutes! Last chance to stash your loot."                          },
+  { bit: 4, offsetMs:  1 * 60_000, message: "1 minute! Say goodbye to your Pals... for now."                      },
+  { bit: 5, offsetMs:    30_000,   message: "30 seconds! Brace yourselves."                                       },
 ];
 
 interface ScheduleJob {
@@ -123,8 +123,8 @@ function registerJob(containerId: string, cronExpr: string, sentWarningsMask: nu
       const ip = await getContainerIP(containerId);
       if (ip) {
         notifyIntentionalShutdown(containerId);
-        await gracefulStop(ip, c.restPort, c.restPassword, "Scheduled server restart.");
-        insertChatMessage(containerId, null, "Scheduled server restart.");
+        await gracefulStop(ip, c.restPort, c.restPassword, "Be right back — scheduled restart in progress.");
+        insertChatMessage(containerId, null, "Be right back — scheduled restart in progress.");
         await new Promise((res) => setTimeout(res, 3000));
       }
 
