@@ -1864,6 +1864,9 @@ function applySystemMessageFilter() {
     const newRect = anchorRow.getBoundingClientRect();
     const newOffset = newRect.top - logEl.getBoundingClientRect().top;
     logEl.scrollTop += newOffset - anchorOffset;
+  } else {
+    // No visible rows before toggle (log was empty) — scroll to bottom
+    requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
   }
 }
 
