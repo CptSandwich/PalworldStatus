@@ -1805,6 +1805,16 @@ async function buildChatLog(root, containerId) {
   _chatLastTs = null;
 
   const logEl = el("div", { class: "chat-log", id: "chat-log" });
+  const chatTable = el("table", { class: "chat-table" });
+  const thead = el("thead");
+  const headRow = el("tr");
+  headRow.appendChild(el("th", {}, "Timestamp"));
+  headRow.appendChild(el("th", {}, "Player"));
+  headRow.appendChild(el("th", {}, "Message"));
+  thead.appendChild(headRow);
+  chatTable.appendChild(thead);
+  chatTable.appendChild(el("tbody", { id: "chat-body" }));
+  logEl.appendChild(chatTable);
   const chatWrapper = el("div", { class: "chat-log-wrapper" });
   chatWrapper.appendChild(logEl);
 
@@ -1827,41 +1837,63 @@ async function buildChatLog(root, containerId) {
 
 function applySystemMessageFilter() {
   const logEl = document.getElementById("chat-log");
-  if (!logEl) return;
+  const tbody = document.getElementById("chat-body");
+  if (!logEl || !tbody) return;
   const show = document.getElementById("chat-show-system")?.checked ?? false;
-  const wasAtBottom = isChatAtBottom(logEl);
+
+  // Scroll-anchor: find first visible row and record its offset from container top
+  let anchorRow = null;
+  let anchorOffset = 0;
+  const logRect = logEl.getBoundingClientRect();
+  for (const row of tbody.querySelectorAll("tr:not([hidden])")) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom > logRect.top) {
+      anchorRow = row;
+      anchorOffset = rect.top - logRect.top;
+      break;
+    }
+  }
+
+  // Toggle system message visibility
   for (const entry of logEl.querySelectorAll(".chat-entry--system")) {
     entry.hidden = !show;
   }
-  if (show && wasAtBottom) requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
+
+  // Restore: keep anchor row at same visual position
+  if (anchorRow) {
+    const newRect = anchorRow.getBoundingClientRect();
+    const newOffset = newRect.top - logEl.getBoundingClientRect().top;
+    logEl.scrollTop += newOffset - anchorOffset;
+  }
 }
 
 async function refreshChatLog(containerId) {
   const logEl = document.getElementById("chat-log");
-  if (!logEl) return;
+  const tbody = document.getElementById("chat-body");
+  if (!logEl || !tbody) return;
   try {
     const res = await fetch(`/api/containers/${encodeURIComponent(containerId)}/chat-log?limit=100`);
     if (!res.ok) return;
     const data = await res.json();
     const wasAtBottom = isChatAtBottom(logEl);
-    logEl.innerHTML = "";
+    tbody.innerHTML = "";
     if (!data.messages.length) {
-      logEl.appendChild(el("span", { class: "chat-log-empty" }, "No messages recorded yet."));
+      const tr = el("tr");
+      tr.appendChild(el("td", { colspan: "3", class: "chat-log-empty" }, "No messages recorded yet."));
+      tbody.appendChild(tr);
       return;
     }
     const showSystem = document.getElementById("chat-show-system")?.checked ?? false;
+    const narrow = window.innerWidth <= 480;
     for (const m of data.messages) {
       const isSystem = !m.player_name;
-      const entry = el("div", { class: isSystem ? "chat-entry chat-entry--system" : "chat-entry" });
-      if (isSystem) entry.hidden = !showSystem;
-      const time = el("span", { class: "chat-time" }, formatTs(m.timestamp));
-      entry.appendChild(time);
-      if (m.player_name) {
-        const player = el("span", { class: "chat-player" }, m.player_name + ": ");
-        entry.appendChild(player);
-      }
-      entry.appendChild(document.createTextNode(m.message));
-      logEl.appendChild(entry);
+      const tr = el("tr", { class: isSystem ? "chat-entry chat-entry--system" : "chat-entry" });
+      if (isSystem) tr.hidden = !showSystem;
+      tr.appendChild(el("td", { class: "chat-td-time" }, formatTs(m.timestamp, narrow)));
+      tr.appendChild(el("td", { class: isSystem ? "chat-td-player chat-player--system" : "chat-td-player" },
+        m.player_name ?? "System"));
+      tr.appendChild(el("td", { class: "chat-td-message" }, m.message));
+      tbody.appendChild(tr);
     }
     const latestTs = data.messages[data.messages.length - 1].timestamp;
     const hasNew = latestTs !== _chatLastTs;
