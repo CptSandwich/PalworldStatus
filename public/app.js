@@ -1879,25 +1879,26 @@ async function refreshChatLog(containerId) {
     if (!res.ok) return;
     const data = await res.json();
     const wasAtBottom = isChatAtBottom(logEl);
-    tbody.innerHTML = "";
+    const frag = document.createDocumentFragment();
     if (!data.messages.length) {
       const tr = el("tr");
       tr.appendChild(el("td", { colspan: "3", class: "chat-log-empty" }, "No messages recorded yet."));
-      tbody.appendChild(tr);
+      frag.appendChild(tr);
+      tbody.replaceChildren(frag);
       return;
     }
     const showSystem = document.getElementById("chat-show-system")?.checked ?? false;
-    const narrow = window.innerWidth <= 480;
     for (const m of data.messages) {
       const isSystem = !m.player_name;
       const tr = el("tr", { class: isSystem ? "chat-entry chat-entry--system" : "chat-entry" });
       if (isSystem) tr.hidden = !showSystem;
-      tr.appendChild(el("td", { class: "chat-td-time" }, formatTs(m.timestamp, narrow)));
+      tr.appendChild(el("td", { class: "chat-td-time" }, formatTs(m.timestamp)));
       tr.appendChild(el("td", { class: isSystem ? "chat-td-player chat-player--system" : "chat-td-player" },
         m.player_name ?? "System"));
       tr.appendChild(el("td", { class: "chat-td-message" }, m.message));
-      tbody.appendChild(tr);
+      frag.appendChild(tr);
     }
+    tbody.replaceChildren(frag);
     const latestTs = data.messages[data.messages.length - 1].timestamp;
     const hasNew = latestTs !== _chatLastTs;
     _chatLastTs = latestTs;
